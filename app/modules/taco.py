@@ -15,7 +15,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from app.services.llm_client import llm
-from app.services.news_feed import fetch_keywords
+from app.services.news_feed import fetch_keywords, fetch_market_headlines
 from app.storage.db import save_snapshot
 from app.utils.logger import get_logger
 from app.utils.tz import now_bj
@@ -52,13 +52,15 @@ GLOBAL_KEYWORDS_ZH = [
 
 
 def build_taco_report() -> dict:
-    # 中英文新闻并行抓
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="taco-fetch") as pool:
+    # 三路并行：英文关键词 + 中文关键词 + 常驻宏观/全球 RSS 源
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="taco-fetch") as pool:
         f_en = pool.submit(fetch_keywords, GLOBAL_KEYWORDS_EN, "en-US", "US", 4)
         f_zh = pool.submit(fetch_keywords, GLOBAL_KEYWORDS_ZH, "zh-CN", "CN", 4)
+        f_macro = pool.submit(fetch_market_headlines, "macro", 25, True)
         en_news = f_en.result()
         zh_news = f_zh.result()
-    all_news = en_news + zh_news
+        macro_news = f_macro.result()
+    all_news = en_news + zh_news + macro_news
 
     # 去重
     seen = set()

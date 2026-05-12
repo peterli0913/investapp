@@ -50,17 +50,33 @@ market_tab = st.tabs(MARKETS)
 for tab, market in zip(market_tab, MARKETS):
     with tab:
         market_data = (payload.get("markets") or {}).get(market) or {}
+        headlines = (payload.get("headlines") or {}).get(market) or []
+
         if not market_data:
             st.info(f"{market} 暂无数据。")
             continue
 
-        # 顶部：板块涨跌幅柱状图（A 股、加密币 都能拿到数据）
+        # 顶部：板块涨跌幅柱状图（现在所有市场都能展示）
         chart_title = "📊 今日板块涨跌幅一览" if market != "加密币" else "📊 24 小时涨跌幅一览"
         chart = _pct_bar(market_data)
         if chart:
             st.markdown(f"##### {chart_title}")
             st.plotly_chart(chart, use_container_width=True)
-            st.markdown("---")
+
+        # 市场要闻：来自常驻 RSS 源
+        if headlines:
+            with st.expander(f"📰 {market} 市场要闻（{len(headlines)} 条 · 来自财经源 RSS）", expanded=False):
+                for n in headlines:
+                    title = n.get("title") or "(无标题)"
+                    link = n.get("link") or "#"
+                    src = n.get("source") or ""
+                    pub = n.get("published") or ""
+                    st.markdown(
+                        f"- [{title}]({link})  \n"
+                        f"  <span style='color:#8B949E;font-size:12px'>{src} · {pub}</span>",
+                        unsafe_allow_html=True,
+                    )
+        st.markdown("---")
 
         # 下面：每个板块/主题的卡片（动态读 payload，不依赖硬编码列表）
         for sector, entry in market_data.items():
@@ -83,13 +99,17 @@ for tab, market in zip(market_tab, MARKETS):
                 unsafe_allow_html=True,
             )
 
-            # 加密币：把具体币种行情列成 metrics
+            # 行情明细（加密币 / 美股 ETF / 港股指数 等都会有 quotes）
             if quotes:
                 cols = st.columns(min(len(quotes), 4))
                 for i, q in enumerate(quotes):
+                    ticker = q.get("ticker", "—")
+                    price = q.get("price", 0) or 0
+                    # 货币符号：加密币 / 美股 用 $；港股 / 日股 / 韩股 不带前缀（指数）
+                    prefix = "$" if (market in ("加密币", "美股") and price >= 1) else ""
                     cols[i % len(cols)].metric(
-                        q.get("ticker", "—"),
-                        f"${q.get('price', 0):,.2f}",
+                        ticker,
+                        f"{prefix}{price:,.2f}" if price else "—",
                         f"{q.get('pct_24h', 0):+.2f}%",
                     )
 

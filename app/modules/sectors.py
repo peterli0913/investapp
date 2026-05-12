@@ -9,8 +9,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.services.llm_client import llm
-from app.services.market_data import crypto_quote, sector_concept_rank, sector_industry_rank
-from app.services.news_feed import fetch_keywords
+from app.services.market_data import (
+    crypto_quote, sector_concept_rank, sector_industry_rank, yf_quote,
+)
+from app.services.news_feed import fetch_keywords, fetch_market_headlines
 from app.storage.db import save_snapshot
 from app.utils.logger import get_logger
 from app.utils.tz import now_bj
@@ -26,6 +28,46 @@ SECTOR_KEYWORDS = {
     "机器人": ["人形机器人", "机器人", "特斯拉 机器人", "宇树科技"],
     "大消费": ["消费 复苏", "白酒", "新消费", "免税", "零售"],
     "石油": ["原油", "OPEC", "油价", "中东 局势"],
+}
+
+# 美股板块代表 ETF（用 yfinance 拿 24h 涨跌幅）
+US_SECTOR_TICKERS: dict[str, list[str]] = {
+    "AI应用":  ["ARKW", "BOTZ", "ROBO"],        # 互联网/AI/机器人 ETF
+    "芯片":    ["SOXX", "SMH"],                 # 半导体 ETF
+    "存储":    ["SMH"],                          # 内存 / 存储归在半导体大类
+    "机器人":  ["BOTZ", "ROBO"],                # 机器人 ETF
+    "大消费":  ["XLY", "XLP"],                   # 可选消费 / 必选消费
+    "石油":    ["XLE", "XOP"],                   # 能源 ETF
+}
+
+# 港股板块代表标的（恒生科技 / 恒生消费 / 恒生指数）
+HK_SECTOR_TICKERS: dict[str, list[str]] = {
+    "AI应用":  ["^HSTECH"],   # 恒生科技指数
+    "芯片":    ["^HSTECH"],
+    "存储":    ["^HSTECH"],
+    "机器人":  ["^HSTECH"],
+    "大消费":  ["^HSI"],       # 恒生指数（代表）
+    "石油":    ["0883.HK"],   # 中海油
+}
+
+# 日股板块代表
+JP_SECTOR_TICKERS: dict[str, list[str]] = {
+    "AI应用":  ["^N225"],     # 日经指数（代表）
+    "芯片":    ["8035.T"],    # 东京电子（半导体设备龙头）
+    "存储":    ["6857.T"],    # Advantest
+    "机器人":  ["6954.T"],    # Fanuc
+    "大消费":  ["3382.T"],    # 7&i
+    "石油":    ["1605.T"],    # INPEX
+}
+
+# 韩股板块代表
+KR_SECTOR_TICKERS: dict[str, list[str]] = {
+    "AI应用":  ["035420.KS"],  # 韩国 Naver
+    "芯片":    ["005930.KS"],  # 三星电子
+    "存储":    ["000660.KS"],  # SK Hynix
+    "机器人":  ["005930.KS"],
+    "大消费":  ["097950.KS"],  # CJ 第一制糖
+    "石油":    ["096770.KS"],  # SK Innovation
 }
 
 # 加密币市场用这套主题（按热门币种 / 赛道分组），值里多了 yfinance 行情符号
@@ -75,11 +117,24 @@ def _lang_country_for_market(market: str) -> tuple[str, str]:
     return "zh-CN", "CN"
 
 
+def _sector_etf_tickers(market: str, sector: str) -> list[str]:
+    """根据 (市场, 板块) 返回应该用 yfinance 拉行情的 ticker 列表。"""
+    if market == "美股":
+        return US_SECTOR_TICKERS.get(sector, [])
+    if market == "港股":
+        return HK_SECTOR_TICKERS.get(sector, [])
+    if market == "日股":
+        return JP_SECTOR_TICKERS.get(sector, [])
+    if market == "韩股":
+        return KR_SECTOR_TICKERS.get(sector, [])
+    return []
+
+
 def _process_one(market: str, sector: str, kws: list[str], rank_map: dict[str, dict],
                  tickers: list[str] | None = None) -> tuple[str, str, dict]:
-    """处理单个 (市场, 板块) 的新闻 + LLM 总结。可并行调用。
+    """处理单个 (市场, 板块) 的新闻 + LLM 总结 + 板块行情。可并行调用。
 
-    tickers 仅加密币市场使用，传入相应 yfinance 符号拉行情。
+    tickers 仅加密币市场需要传入；其他市场会自动根据 (市场, 板块) 查 ETF 列表。
     """
     lang, country = _lang_country_for_market(market)
     news = fetch_keywords([f"{sector} {market}"] + kws, lang=lang, country=country, per=4)
@@ -87,22 +142,36 @@ def _process_one(market: str, sector: str, kws: list[str], rank_map: dict[str, d
     summary = llm.summarize_sector(f"{market} - {sector}", titles)
 
     pct = None
-    extra = {}
+    extra: dict = {}
+
     if market == "A股":
+        # A 股从 akshare 板块涨跌榜匹配
         for k, v in rank_map.items():
             if sector in k or k in sector:
                 pct = v.get("pct")
                 break
     elif market == "加密币" and tickers:
-        # 用第一只代表性 ticker 的 24h 涨跌幅当作"板块涨跌幅"
+        # 加密币用 yfinance 拉 24h 涨跌幅
         quotes = []
         for t in tickers:
             q = crypto_quote(t)
             if q:
-                quotes.append({"ticker": t, **q})
+                quotes.append(q)
         if quotes:
             pct = sum(q["pct_24h"] for q in quotes) / len(quotes)
             extra["quotes"] = quotes
+    else:
+        # 美股 / 港股 / 日股 / 韩股 → 用代表 ETF / 指数的 yfinance 行情
+        etf_tickers = _sector_etf_tickers(market, sector)
+        if etf_tickers:
+            quotes = []
+            for t in etf_tickers:
+                q = yf_quote(t)
+                if q:
+                    quotes.append(q)
+            if quotes:
+                pct = sum(q["pct_24h"] for q in quotes) / len(quotes)
+                extra["quotes"] = quotes
 
     return market, sector, {
         "pct": pct,
@@ -112,14 +181,20 @@ def _process_one(market: str, sector: str, kws: list[str], rank_map: dict[str, d
     }
 
 
+MARKET_CODE = {
+    "A股": "cn", "港股": "hk", "美股": "us", "日股": "jp", "韩股": "kr", "加密币": "crypto",
+}
+
+
 def build_sector_report() -> dict[str, Any]:
     """聚合每个市场 × 每个板块的新闻 + 板块涨跌幅 + AI 总结。
 
-    优化：18 个 (市场, 板块) 任务并行（每个任务内部已经并行抓 RSS + 调 LLM）。
+    36 个 (市场, 板块) 任务并行；同时各市场抓常驻 RSS 头条作为"市场要闻"。
     """
     report: dict[str, Any] = {
         "updated_at": now_bj().isoformat(),
         "markets": {market: {} for market in MARKETS},
+        "headlines": {market: [] for market in MARKETS},
     }
 
     # A 股板块行情（一次性串行抓即可，akshare 不支持并发太多）
@@ -137,8 +212,8 @@ def build_sector_report() -> dict[str, Any]:
                 "pct": float(row[chg_col]) if chg_col and chg_col in row and row[chg_col] == row[chg_col] else None,
             }
 
-    # 全部 (市场, 板块) 任务并行
-    # 5 股市 × 6 板块 + 加密币 × 6 主题 = 36 个任务
+    # 同时启动：各市场常驻 RSS 头条 + (市场, 板块) 任务
+    # 5 股市 × 6 板块 + 加密币 × 6 主题 = 36 个任务 + 6 个市场要闻
     tasks: list[tuple[str, str, list[str], list[str]]] = []
     for market in MARKETS:
         if market == "加密币":
@@ -148,16 +223,30 @@ def build_sector_report() -> dict[str, Any]:
             for sector, kws in SECTOR_KEYWORDS.items():
                 tasks.append((market, sector, kws, []))
 
-    # max_workers 不要超过 12：DeepSeek 单账号也有并发限制，过高反而被限流
-    with ThreadPoolExecutor(max_workers=12, thread_name_prefix="sector") as pool:
-        futures = [pool.submit(_process_one, m, s, kws, rank_map, tickers)
-                   for m, s, kws, tickers in tasks]
-        for fut in as_completed(futures):
+    # max_workers 不要超过 14：DeepSeek 单账号也有并发限制
+    with ThreadPoolExecutor(max_workers=14, thread_name_prefix="sector") as pool:
+        # 板块任务
+        sector_futures = [pool.submit(_process_one, m, s, kws, rank_map, tickers)
+                          for m, s, kws, tickers in tasks]
+        # 各市场要闻（常驻 RSS）
+        headline_futures = {
+            market: pool.submit(fetch_market_headlines, MARKET_CODE.get(market, "global"), 15)
+            for market in MARKETS
+        }
+
+        for fut in as_completed(sector_futures):
             try:
                 market, sector, data = fut.result()
                 report["markets"][market][sector] = data
             except Exception as e:
                 logger.warning("sector task failed: %s", e)
+
+        for market, fut in headline_futures.items():
+            try:
+                items = fut.result()
+                report["headlines"][market] = [n.to_dict() for n in items]
+            except Exception as e:
+                logger.warning("headlines for %s failed: %s", market, e)
 
     save_snapshot("sectors", "default", report)
     logger.info("sector report built at %s", report["updated_at"])

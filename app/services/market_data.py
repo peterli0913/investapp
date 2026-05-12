@@ -218,6 +218,30 @@ def hk_ipo_calendar() -> pd.DataFrame:
 
 # ---------- 新股推荐池 ----------
 
+def yf_quote(symbol: str) -> dict | None:
+    """通用 yfinance 行情：返回 {price, pct_24h, volume}。
+
+    适用于 ETF、指数、加密币、个股。失败返回 None。
+    """
+    try:
+        import yfinance as yf
+        df = yf.Ticker(symbol).history(period="5d")
+        if df is None or df.empty or len(df) < 2:
+            return None
+        last = df["Close"].iloc[-1]
+        prev = df["Close"].iloc[-2]
+        vol = df["Volume"].iloc[-1] if "Volume" in df.columns else 0.0
+        return {
+            "ticker": symbol,
+            "price": float(last),
+            "pct_24h": float((last / prev - 1.0) * 100.0),
+            "volume": float(vol),
+        }
+    except Exception as e:
+        logger.info("yf_quote(%s) failed: %s", symbol, e)
+        return None
+
+
 def crypto_quote(symbol: str) -> dict | None:
     """加密币行情：symbol 形如 'BTC-USD'，返回 {price, pct_24h, volume}。
 

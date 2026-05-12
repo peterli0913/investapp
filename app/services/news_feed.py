@@ -22,26 +22,64 @@ logger = get_logger("news")
 # 全局线程池，所有并行 HTTP 共享，避免每次 build_*_report 都开新池
 _HTTP_POOL = ThreadPoolExecutor(max_workers=24, thread_name_prefix="rss")
 
-# 通用财经源（中英文混合）
-DEFAULT_FEEDS: dict[str, list[str]] = {
+# 常驻财经 RSS 源池（按市场分类），用于每个市场 tab 的"市场要闻"
+MARKET_FEEDS: dict[str, list[str]] = {
     "global": [
         "https://feeds.reuters.com/reuters/businessNews",
-        "https://www.bloomberg.com/feed/podcast/etf-report.xml",
-        "https://www.ft.com/?format=rss",
+        "https://feeds.reuters.com/reuters/marketsNews",
+        "https://www.cnbc.com/id/15839135/device/rss/rss.html",       # CNBC Markets
+        "https://www.ft.com/?format=rss",                              # FT
+        "https://www.investing.com/rss/news_25.rss",                   # Investing.com 全球
+        "https://seekingalpha.com/market_currents.xml",                # Seeking Alpha
+        "https://www.economist.com/finance-and-economics/rss.xml",     # Economist
     ],
     "cn": [
         "https://feed.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=20&format=rss",  # 新浪财经
-        "https://www.cls.cn/telegraph/rss",  # 财联社（如可用）
-        "https://wallstreetcn.com/feeds/news/all",  # 华尔街见闻
-    ],
-    "hk": [
-        "https://www.hkex.com.hk/-/media/HKEX-Market/Listing/Market-Misc/IPO/IPO-RSS/IPO_TC.xml",
+        "https://wallstreetcn.com/feeds/news/all",                      # 华尔街见闻
+        "https://www.cls.cn/telegraph/rss",                             # 财联社
+        "https://www.yicai.com/feed/",                                  # 第一财经
+        "https://feed.sina.com.cn/api/roll/get?pageid=384&lid=2671&num=20&format=rss",  # 新浪 A 股
+        "http://www.cs.com.cn/xwzx/hg/yw/rss.xml",                      # 中证网宏观
     ],
     "us": [
-        "https://www.cnbc.com/id/100727362/device/rss/rss.html",
-        "https://www.marketwatch.com/rss/topstories",
+        "https://www.cnbc.com/id/100727362/device/rss/rss.html",        # CNBC Top News
+        "https://www.cnbc.com/id/15839069/device/rss/rss.html",         # CNBC Tech
+        "https://www.marketwatch.com/rss/topstories",                   # MarketWatch
+        "https://www.marketwatch.com/rss/marketpulse",                  # MarketWatch Pulse
+        "https://www.investing.com/rss/news_301.rss",                   # Investing US Stocks
+        "https://feeds.bbci.co.uk/news/business/rss.xml",               # BBC Business
+    ],
+    "hk": [
+        "https://www.hkex.com.hk/-/media/HKEX-Market/Listing/Market-Misc/IPO/IPO-RSS/IPO_TC.xml",  # 港交所 IPO
+        "https://hk.finance.yahoo.com/news/rssindex",                   # 雅虎财经 香港
+        "http://www.aastocks.com/sc/rss/all.aspx",                      # AAStocks 简中
+        "https://www.investing.com/rss/news_75.rss",                    # Investing 港股
+    ],
+    "jp": [
+        "https://www.japantimes.co.jp/feed/topstories/",                # Japan Times
+        "https://asia.nikkei.com/rss/feed/nar",                          # Nikkei Asia
+    ],
+    "kr": [
+        "https://en.yna.co.kr/RSS/finance.xml",                          # 韩联社英文
+        "https://www.investing.com/rss/news_357.rss",                   # Investing 韩股
+    ],
+    "crypto": [
+        "https://www.coindesk.com/arc/outboundfeeds/rss/",              # CoinDesk
+        "https://cointelegraph.com/rss",                                 # Cointelegraph
+        "https://decrypt.co/feed",                                       # Decrypt
+        "https://cryptopanic.com/news/rss/",                             # CryptoPanic
+    ],
+    # 主题专项源（用于国际动态模块的常驻补充）
+    "macro": [
+        "https://www.federalreserve.gov/feeds/press_all.xml",            # 美联储官方
+        "https://feeds.reuters.com/reuters/topNews",                     # Reuters Top
+        "http://rss.cnn.com/rss/cnn_world.rss",                          # CNN World
+        "https://www.aljazeera.com/xml/rss/all.xml",                     # Al Jazeera（中东视角）
     ],
 }
+
+# 兼容老名字
+DEFAULT_FEEDS = MARKET_FEEDS
 
 
 @dataclass
@@ -117,16 +155,54 @@ def fetch_many(urls: Iterable[str]) -> list[NewsItem]:
     return out
 
 
-def fetch_keywords(keywords: list[str], lang: str = "zh-CN", country: str = "CN", per: int = 8) -> list[NewsItem]:
-    """并行抓多个关键词的 Google News。"""
+def fetch_market_headlines(market_code: str, limit: int = 25,
+                            *, include_global: bool = True) -> list[NewsItem]:
+    """聚合某个市场的常驻 RSS 源头条。
+
+    market_code 形如 'cn' / 'us' / 'hk' / 'jp' / 'kr' / 'crypto' / 'macro' / 'global'。
+    include_global=True 时会自动并入 global 源，扩大覆盖。
+    """
+    feeds = list(MARKET_FEEDS.get(market_code, []))
+    if include_global and market_code != "global":
+        feeds.extend(MARKET_FEEDS.get("global", []))
+    items = fetch_many(feeds)
+    # 按发布时间倒序，新的在前
+    items.sort(key=lambda n: n.published or "", reverse=True)
+    # 去重
+    seen = set()
+    out = []
+    for n in items:
+        if not n.title or n.link in seen:
+            continue
+        seen.add(n.link)
+        out.append(n)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def fetch_keywords(keywords: list[str], lang: str = "zh-CN", country: str = "CN", per: int = 8,
+                   *, also_country: list[str] | None = None) -> list[NewsItem]:
+    """并行抓多个关键词的 Google News。
+
+    also_country：除了主 country 外再补一个 fallback，扩大召回率。
+    例如 中文场景 country='CN' + also_country=['HK', 'TW']，抓取中港台三地中文新闻。
+    """
     if not keywords:
         return []
 
-    def _one(kw: str) -> list[NewsItem]:
-        items = google_news_rss(kw, lang=lang, country=country)
+    countries = [(lang, country)]
+    if also_country:
+        for c in also_country:
+            countries.append((lang, c))
+
+    def _one(kw_country: tuple[str, tuple[str, str]]) -> list[NewsItem]:
+        kw, (l, c) = kw_country
+        items = google_news_rss(kw, lang=l, country=c)
         return items[:per]
 
-    futures = [_HTTP_POOL.submit(_one, kw) for kw in keywords]
+    tasks = [(kw, lc) for kw in keywords for lc in countries]
+    futures = [_HTTP_POOL.submit(_one, t) for t in tasks]
     out: list[NewsItem] = []
     for fut in as_completed(futures):
         try:

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.services.llm_client import _extract_json, llm
 from app.services.market_data import hk_ipo_calendar
-from app.services.news_feed import fetch_keywords
+from app.services.news_feed import fetch_keywords, fetch_market_headlines
 from app.storage.db import save_snapshot
 from app.utils.logger import get_logger
 from app.utils.tz import now_bj
@@ -42,15 +42,33 @@ def _normalize_row(row: dict) -> dict:
 
 
 def _extract_hk_ipos_from_news() -> list[dict]:
-    """fallback: 从 Google News 抓港股招股新闻，让 LLM 提结构化数据。
+    """fallback: 从 Google News + 港交所 + AAStocks + 雅虎财经香港 抓港股招股新闻，
+    让 LLM 提结构化数据。
 
     返回与 _normalize_row 同样字段（name / price_range / list_date / industry / sponsor / fund）。
     """
     keywords = [
         "港股 招股", "港股 IPO 招股", "港股 公开发售", "Hong Kong IPO 招股",
         "港股 新股 上市", "港股 招股 截止", "港股 招股 基石",
+        "港交所 上市聆讯",  # 补充：上市聆讯阶段也算潜在新股
     ]
-    news = fetch_keywords(keywords, lang="zh-CN", country="CN", per=4)
+    # 三路并行：Google News 关键词 + 港交所 RSS + 香港财经 RSS
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="ipo-fetch") as p:
+        f1 = p.submit(fetch_keywords, keywords, "zh-CN", "CN", 4)
+        f2 = p.submit(fetch_market_headlines, "hk", 25, False)
+        news_kw = f1.result()
+        news_hk = f2.result()
+    news = news_kw + news_hk
+    # 去重
+    seen = set()
+    dedup = []
+    for n in news:
+        if not n.link or n.link in seen:
+            continue
+        seen.add(n.link)
+        dedup.append(n)
+    news = dedup
     if not news:
         logger.warning("ipo fallback: 无招股相关新闻抓到")
         return []

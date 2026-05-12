@@ -120,12 +120,17 @@ def _process_one_stock(w: dict) -> dict:
     signal = _ma_signal(df) if has_data else "数据不足"
     metrics = _today_metrics(df) if has_data else {}
 
-    # 2) 新闻
+    # 2) 新闻（多源：Google News 关键词 + 中港台三地扩召回 + 行业新闻关键词）
     news = []
     titles = []
     try:
         lang, country = _news_lang(market)
-        news = fetch_keywords([name, f"{name} 股价"], lang=lang, country=country, per=5)
+        also = ["HK", "TW"] if lang.startswith("zh") else None
+        news = fetch_keywords(
+            [name, f"{name} 股价", f"{name} 财报", f"{name} 业绩"],
+            lang=lang, country=country, per=4,
+            also_country=also,
+        )
         titles = [n.title for n in news if n.title]
     except Exception as e:
         errors.append(f"新闻抓取异常: {e}")
