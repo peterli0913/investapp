@@ -6,12 +6,52 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.utils.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger("llm")
+
+
+def _extract_json(raw: str) -> Any:
+    """从 LLM 输出里提取 JSON。
+
+    DeepSeek V4 Pro 思考模式可能输出 <think>...</think> 包裹的推理过程，或加 ```json ... ```
+    code fence；我们把这些剥掉再 parse。
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    # 1. 去掉 <think>...</think> 块
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    # 2. 去掉 markdown code fence
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, flags=re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1)
+    # 3. 直接尝试
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # 4. 截取第一个 { 到最后一个 } 之间的内容
+    first = text.find("{")
+    last = text.rfind("}")
+    if first >= 0 and last > first:
+        try:
+            return json.loads(text[first:last + 1])
+        except Exception:
+            pass
+    # 5. 截取第一个 [ 到最后一个 ] 之间的内容
+    first = text.find("[")
+    last = text.rfind("]")
+    if first >= 0 and last > first:
+        try:
+            return json.loads(text[first:last + 1])
+        except Exception:
+            pass
+    return None
 
 
 class LLMClient:
@@ -156,61 +196,128 @@ class LLMClient:
         out = self.chat(sys, usr, max_tokens=500, tier="fast")
         return out or self._fallback_sector_summary(sector, news_titles)
 
-    def analyze_trump_impact(self, news_titles: list[str]) -> str:
+    def analyze_global_impact(self, news_titles: list[str]) -> str:
+        """对国际局势 / 美国 / 中国相关新闻做综合分析。"""
         if not self._client or not news_titles:
             return self._fallback_trump(news_titles)
         sys = (
-            "你是个会用大白话讲宏观的策略师。基于特朗普最近的新闻，告诉普通投资者："
-            "(1) 他最近在折腾啥；(2) 这事按常理走会怎么影响美股、A股、港股；"
-            "(3) 哪些股票/板块要小心，哪些可能反而沾光。"
-            "语气要像在饭桌上聊新闻，控制 300 字内。不要套用『核心事件/市场逻辑/影响/风险』这种生硬框架，"
-            "直接讲故事讲透就行。"
+            "你是个会用大白话讲宏观的策略师。基于下面这堆国际新闻（含特朗普政策、美联储、"
+            "中美关系、地缘冲突、央行决议、大宗商品等），告诉普通投资者："
+            "(1) 最近最大的几件事是啥；(2) 这些事按常理会怎么搅动美股、A 股、港股、加密币；"
+            "(3) 哪些板块要小心，哪些可能沾光。"
+            "语气像饭桌上聊新闻，控制 350 字内。不要套生硬框架，直接讲故事讲透。"
         )
         usr = "新闻标题：\n" + "\n".join(f"- {t}" for t in news_titles[:25])
-        out = self.chat(sys, usr, max_tokens=900, tier="deep")
+        out = self.chat(sys, usr, max_tokens=1200, tier="deep")
         return out or self._fallback_trump(news_titles)
 
-    def extract_trump_events(self, news_items: list[dict]) -> list[dict]:
-        """从新闻里抽出最近的特朗普事件，每个事件包含日期、标题、通俗解读、对市场的影响。
+    # 保留旧名作为别名，避免上游代码引用断裂
+    analyze_trump_impact = analyze_global_impact
 
-        返回结构化 JSON 列表，便于 UI 渲染成时间轴。
+    def extract_global_events(self, news_items: list[dict]) -> list[dict]:
+        """从国际新闻里抽出最近最重要的事件，含类型标签。
+
+        每个事件：date / title / category / plain（大白话解读）/ impact（市场影响）/ links。
         """
         if not self._client or not news_items:
-            return self._fallback_trump_events(news_items)
-        # 给 LLM 紧凑的输入：标题 + 发布时间 + 链接索引
+            return self._fallback_global_events(news_items)
+
+        # 给 LLM 紧凑的输入：标题 + 发布时间 + 索引
         compact = []
-        for i, n in enumerate(news_items[:30]):
-            compact.append(f"[{i}] {n.get('published','')[:10]} {n.get('title','')}")
+        for i, n in enumerate(news_items[:40]):
+            pub = (n.get("published") or "")[:10]
+            title = (n.get("title") or "")[:200]  # 限长，防止超 token
+            compact.append(f"[{i}] {pub} {title}")
+
         sys = (
-            "你是个会用大白话讲新闻的财经编辑。任务：从下面这堆特朗普相关新闻里，"
-            "整理出最近最重要的 5-8 个『事件』。"
-            "每个事件要做到：1) 一句话标题；2) 用 1-2 句大白话告诉普通人这事是怎么回事（举例、打比方都行）；"
-            "3) 给出对股市的『简明影响』（比如：『美股短期会震，受影响的是芯片股』）。"
-            "严格输出 JSON："
-            "{\"events\":[{\"date\":\"YYYY-MM-DD\",\"title\":\"...\",\"plain\":\"...\",\"impact\":\"...\",\"refs\":[新闻索引]}]}"
+            "你是个会用大白话讲新闻的财经编辑。任务：从下面这堆国际新闻里，整理出最近最重要的"
+            "5-10 个『大事件』。范围包括但不限于：特朗普政策、美联储动作、中美关系、地缘冲突、"
+            "央行决议、能源价格、AI/科技监管等。\n"
+            "每个事件包含：\n"
+            "- date: 事件日期 YYYY-MM-DD\n"
+            "- title: 一句话标题\n"
+            "- category: 事件类型，从这几个里选一个：政治 / 经济 / 地缘 / 科技 / 能源 / 监管 / 央行 / 其它\n"
+            "- plain: 用 1-2 句大白话告诉普通人这事怎么回事（用例子、比喻都行）\n"
+            "- impact: 1 句话讲对股市/加密币的影响（比如『美股芯片股短期会震』）\n"
+            "- refs: 关联新闻的索引列表（从输入的 [i] 编号里挑 1-3 个）\n\n"
+            "严格输出 JSON：{\"events\":[{...},{...}]}。不要输出 markdown，不要解释，直接给 JSON。"
         )
         usr = "新闻列表：\n" + "\n".join(compact)
-        raw = self.chat(sys, usr, json_mode=True, max_tokens=1500, tier="deep")
-        try:
-            data = json.loads(raw)
-            events = data.get("events") or []
-            # 把 refs 索引换成实际链接，方便 UI 渲染
-            for ev in events:
-                refs = ev.get("refs") or []
-                ev["links"] = []
-                for idx in refs:
-                    try:
-                        idx_int = int(idx)
-                        if 0 <= idx_int < len(news_items):
-                            n = news_items[idx_int]
-                            ev["links"].append({"title": n.get("title",""), "url": n.get("link","")})
-                    except Exception:
-                        continue
-                ev.pop("refs", None)
+
+        # 第一次尝试：deep 模式 + 充足 max_tokens
+        raw = self.chat(sys, usr, json_mode=True, max_tokens=3500, tier="deep")
+        events = self._parse_events(raw, news_items)
+        if events:
             return events
-        except Exception as e:
-            logger.warning("extract_trump_events parse failed: %s", e)
-            return self._fallback_trump_events(news_items)
+
+        # 重试一次：换 fast 模式 + 简化 prompt（绕过 deep 思考模式可能的 JSON 不规范）
+        logger.info("extract_global_events: deep mode failed to parse, retrying with fast tier")
+        sys2 = (
+            "你是财经编辑。从新闻列表里挑 5-10 件重要的事，每件事用 JSON 表示："
+            "{\"date\":\"YYYY-MM-DD\",\"title\":\"标题\",\"category\":\"政治/经济/地缘/科技/能源/监管/央行/其它中的一个\","
+            "\"plain\":\"大白话 1-2 句\",\"impact\":\"市场影响 1 句\",\"refs\":[索引]}"
+            "。最终输出：{\"events\":[...]}。"
+        )
+        raw2 = self.chat(sys2, usr, json_mode=True, max_tokens=2500, tier="fast")
+        events2 = self._parse_events(raw2, news_items)
+        if events2:
+            return events2
+
+        logger.warning("extract_global_events: both LLM attempts failed, raw1=%s raw2=%s",
+                       (raw or "")[:300], (raw2 or "")[:300])
+        return self._fallback_global_events(news_items)
+
+    # 老接口别名（向后兼容）
+    extract_trump_events = extract_global_events
+
+    @staticmethod
+    def _parse_events(raw: str, news_items: list[dict]) -> list[dict]:
+        """把 LLM 返回的 raw 解析成 events list，并把 refs 索引换成实际链接。"""
+        if not raw:
+            return []
+        data = _extract_json(raw)
+        if not data:
+            return []
+        events = data.get("events") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        if not events:
+            return []
+
+        cleaned: list[dict] = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            refs = ev.get("refs") or []
+            ev["links"] = []
+            for idx in refs:
+                try:
+                    idx_int = int(idx)
+                    if 0 <= idx_int < len(news_items):
+                        n = news_items[idx_int]
+                        ev["links"].append({"title": n.get("title",""), "url": n.get("link","")})
+                except Exception:
+                    continue
+            ev.pop("refs", None)
+            ev.setdefault("category", "其它")
+            ev.setdefault("date", "")
+            ev.setdefault("title", "未知事件")
+            ev.setdefault("plain", "")
+            ev.setdefault("impact", "—")
+            cleaned.append(ev)
+        return cleaned
+
+    @staticmethod
+    def _fallback_global_events(news_items: list[dict]) -> list[dict]:
+        events = []
+        for n in news_items[:8]:
+            events.append({
+                "date": (n.get("published") or "")[:10],
+                "title": n.get("title") or "未知事件",
+                "category": "其它",
+                "plain": "（暂未生成 AI 解读，可能是 LLM 未配置 / 返回失败。这里直接展示新闻标题。）",
+                "impact": "—",
+                "links": [{"title": n.get("title",""), "url": n.get("link","")}],
+            })
+        return events
 
     def stock_outlook(self, name: str, recent_pct: float, news_titles: list[str],
                       ma_signal: str) -> dict:
@@ -262,18 +369,7 @@ class LLMClient:
         except Exception:
             return self._fallback_ipo(ipo)
 
-    @staticmethod
-    def _fallback_trump_events(news_items: list[dict]) -> list[dict]:
-        events = []
-        for n in news_items[:6]:
-            events.append({
-                "date": (n.get("published") or "")[:10],
-                "title": n.get("title") or "未知事件",
-                "plain": "（未配置 LLM，仅显示新闻标题，无法生成大白话解读）",
-                "impact": "—",
-                "links": [{"title": n.get("title",""), "url": n.get("link","")}],
-            })
-        return events
+    # _fallback_global_events 已在上面定义，作为兜底实现
 
     # ---------- 启发式回退 ----------
     @staticmethod

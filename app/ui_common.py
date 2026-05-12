@@ -83,7 +83,7 @@ def render_refresh_bar(module_key: str, label: str) -> Any:
         # 显示具体步骤说明，避免干瞪眼
         hint = {
             "sectors": "并行抓 5 股市 + 加密币 共 36 个主题的新闻 + AI 总结（约 20-50 秒）",
-            "taco": "并行抓中英文 Trump 新闻 + AI 影响分析 + 事件时间轴（约 10-25 秒）",
+            "taco": "并行抓 30+ 国际关键词新闻 + AI 总分析 + 事件时间轴（约 15-40 秒）",
             "tracked": "并行抓自选股的行情 + 新闻 + AI 建议（约 10-30 秒）",
             "ipo": "抓港股新股日历 + 并行 AI 评估（约 10-30 秒）",
             "recommendations": "抓 A 股+港股新股池 + 并行 AI 评级（约 20-60 秒）",

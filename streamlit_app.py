@@ -58,7 +58,7 @@ pg = st.navigation(
         "概览": [_page("app/pages/0_首页.py", "首页", "🏠")],
         "信息模块": [
             _page("app/pages/1_火热板块动态.py", "火热板块动态", "🔥"),
-            _page("app/pages/2_TACO动态.py", "TACO 动态", "🇺🇸"),
+            _page("app/pages/2_TACO动态.py", "国际动态", "🌍"),
             _page("app/pages/3_热门股票追踪.py", "热门股票追踪", "📊"),
             _page("app/pages/4_港股打新.py", "港股打新", "🆕"),
             _page("app/pages/5_新股推荐.py", "新股推荐", "⭐"),

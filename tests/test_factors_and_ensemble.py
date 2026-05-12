@@ -125,6 +125,66 @@ def test_sentiment_aggregate():
     assert s > 0
 
 
+# ---------------- _extract_json：覆盖 DeepSeek 思考模式 + code fence 等边角 ----------------
+def test_extract_json_plain():
+    from app.services.llm_client import _extract_json
+    r = _extract_json('{"events":[{"date":"2026-05-12","title":"foo"}]}')
+    assert r == {"events": [{"date": "2026-05-12", "title": "foo"}]}
+
+
+def test_extract_json_with_think_tag():
+    from app.services.llm_client import _extract_json
+    raw = '<think>let me analyze...</think>{"events":[{"a":1}]}'
+    r = _extract_json(raw)
+    assert r == {"events": [{"a": 1}]}
+
+
+def test_extract_json_with_code_fence():
+    from app.services.llm_client import _extract_json
+    raw = '```json\n{"events":[]}\n```'
+    r = _extract_json(raw)
+    assert r == {"events": []}
+
+
+def test_extract_json_with_surrounding_text():
+    from app.services.llm_client import _extract_json
+    raw = 'Here is my answer:\n{"events":[{"x":1}]}\nHope helps!'
+    r = _extract_json(raw)
+    assert r == {"events": [{"x": 1}]}
+
+
+def test_extract_json_broken_returns_none():
+    from app.services.llm_client import _extract_json
+    assert _extract_json("totally garbage no json") is None
+    assert _extract_json("") is None
+
+
+def test_global_events_fallback():
+    from app.services.llm_client import LLMClient
+    fb = LLMClient._fallback_global_events([
+        {"title": "Trump signs tariff", "link": "http://x", "published": "2026-05-11T10:00:00"},
+    ])
+    assert len(fb) == 1
+    assert fb[0]["title"] == "Trump signs tariff"
+    assert fb[0]["category"] == "其它"
+    assert fb[0]["links"][0]["url"] == "http://x"
+
+
+def test_parse_events_resolves_refs():
+    from app.services.llm_client import LLMClient
+    raw = '{"events":[{"date":"2026-05-12","title":"e1","category":"政治","refs":[0,1]}]}'
+    news = [
+        {"title": "A", "link": "http://a", "published": "2026-05-12"},
+        {"title": "B", "link": "http://b", "published": "2026-05-12"},
+    ]
+    parsed = LLMClient._parse_events(raw, news)
+    assert len(parsed) == 1
+    assert parsed[0]["category"] == "政治"
+    assert len(parsed[0]["links"]) == 2
+    assert parsed[0]["links"][0]["url"] == "http://a"
+    assert "refs" not in parsed[0]
+
+
 def test_backtest_smoke_synthetic(monkeypatch):
     """绕过真实数据源，用 patched stock_hist 跑完整回测流程。"""
     np.random.seed(42)

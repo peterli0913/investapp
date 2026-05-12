@@ -30,7 +30,7 @@ st.markdown("---")
 st.subheader("各模块最新更新时间")
 modules = [
     ("sectors", "🔥 最近啥板块在火"),
-    ("taco", "🇺🇸 特朗普动态"),
+    ("taco", "🌍 国际动态"),
     ("tracked", "📊 我的关注股"),
     ("ipo", "🆕 港股打新"),
     ("recommendations", "⭐ 新股推荐"),
