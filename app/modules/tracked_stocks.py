@@ -9,9 +9,11 @@ from typing import Any
 
 import pandas as pd
 
+from app.backtest.engine import _signal_ensemble
 from app.services.llm_client import llm
 from app.services.market_data import stock_hist
 from app.services.news_feed import fetch_keywords
+from app.services.sentiment import headlines_sentiment
 from app.storage.db import get_watchlist, save_snapshot
 from app.utils.logger import get_logger
 from app.utils.tz import now_bj
@@ -58,7 +60,13 @@ def build_tracked_report() -> dict[str, Any]:
         lang, country = _news_lang(market)
         news = fetch_keywords([name, f"{name} 股价"], lang=lang, country=country, per=5)
         titles = [n.title for n in news if n.title]
-        outlook = llm.stock_outlook(name, pct, titles, signal)
+        sentiment = headlines_sentiment(titles)
+        # ensemble 给出量化方向，作为 LLM 之外的客观参考
+        ens_signal = _signal_ensemble(df, sentiment=sentiment) if not df.empty else 0
+        ens_text = {1: "看多", -1: "看空", 0: "中性"}[ens_signal]
+        outlook = llm.stock_outlook(name, pct, titles, f"{signal} · 多因子ensemble:{ens_text} · 情绪:{sentiment:+.2f}")
+        outlook["ensemble_signal"] = ens_text
+        outlook["sentiment"] = sentiment
 
         # 序列化 K 线（最近 120 个交易日，节省体积）
         kline = []
@@ -80,6 +88,8 @@ def build_tracked_report() -> dict[str, Any]:
             "market": market,
             "recent_pct_20d": pct,
             "ma_signal": signal,
+            "sentiment": sentiment,
+            "ensemble_signal": outlook.get("ensemble_signal", "中性"),
             "outlook": outlook,
             "news": [n.to_dict() for n in news[:10]],
             "kline": kline,

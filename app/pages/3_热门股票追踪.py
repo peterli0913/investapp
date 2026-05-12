@@ -62,10 +62,16 @@ for item in items:
     outlook = item.get("outlook") or {}
     trend = outlook.get("trend", "")
     klass = "up" if trend == "上行" else ("down" if trend == "下行" else "neutral")
+    ens = item.get("ensemble_signal", "中性")
+    ens_klass = "up" if ens == "看多" else ("down" if ens == "看空" else "neutral")
+    senti = item.get("sentiment", 0.0) or 0.0
+    senti_klass = "up" if senti > 0.15 else ("down" if senti < -0.15 else "neutral")
     tag_html = (
         f'<span class="tag">{item.get("market","").upper()}</span>'
         f'<span class="tag">近 20 日 {pct_html(pct)}</span>'
-        f'<span class="tag {klass}">趋势：{trend}</span>'
+        f'<span class="tag {klass}">AI 趋势：{trend}</span>'
+        f'<span class="tag {ens_klass}">多因子：{ens}</span>'
+        f'<span class="tag {senti_klass}">新闻情绪：{senti:+.2f}</span>'
         f'<span class="tag">均线：{item.get("ma_signal","-")}</span>'
     )
     st.markdown(
