@@ -1,0 +1,15 @@
+# 专业金融审美：深色主题，红涨绿跌（A 股习惯）
+[theme]
+base = "dark"
+primaryColor = "#E5B864"          # 金色高亮，专业感
+backgroundColor = "#0E1117"       # 深黑
+secondaryBackgroundColor = "#161B22"
+textColor = "#E6EDF3"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

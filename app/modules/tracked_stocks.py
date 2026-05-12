@@ -1,0 +1,90 @@
+"""模块 3：热门股票追踪。
+
+初始三只：胜宏科技(002613.SZ)、极智嘉(02590.HK)、泡泡马特(09992.HK)。
+用户可在 UI 上添加/删除。
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import pandas as pd
+
+from app.services.llm_client import llm
+from app.services.market_data import stock_hist
+from app.services.news_feed import fetch_keywords
+from app.storage.db import get_watchlist, save_snapshot
+from app.utils.logger import get_logger
+from app.utils.tz import now_bj
+
+logger = get_logger("tracked")
+
+
+def _ma_signal(df: pd.DataFrame) -> str:
+    if df.empty or "close" not in df.columns or len(df) < 30:
+        return "数据不足"
+    s = df["close"].astype(float)
+    ma5 = s.rolling(5).mean().iloc[-1]
+    ma20 = s.rolling(20).mean().iloc[-1]
+    last = s.iloc[-1]
+    parts = []
+    parts.append("MA5↑" if last > ma5 else "MA5↓")
+    parts.append("MA20↑" if last > ma20 else "MA20↓")
+    parts.append("金叉" if ma5 > ma20 else "死叉")
+    return " / ".join(parts)
+
+
+def _recent_pct(df: pd.DataFrame, window: int = 20) -> float:
+    if df.empty or len(df) < window:
+        return 0.0
+    s = df["close"].astype(float)
+    return float((s.iloc[-1] / s.iloc[-window] - 1.0) * 100.0)
+
+
+def _news_lang(market: str) -> tuple[str, str]:
+    if market == "us":
+        return "en-US", "US"
+    if market == "hk":
+        return "zh-HK", "HK"
+    return "zh-CN", "CN"
+
+
+def build_tracked_report() -> dict[str, Any]:
+    items = []
+    for w in get_watchlist():
+        sym, name, market = w["symbol"], w["name"], w["market"]
+        df = stock_hist(sym, market)
+        pct = _recent_pct(df)
+        signal = _ma_signal(df)
+        lang, country = _news_lang(market)
+        news = fetch_keywords([name, f"{name} 股价"], lang=lang, country=country, per=5)
+        titles = [n.title for n in news if n.title]
+        outlook = llm.stock_outlook(name, pct, titles, signal)
+
+        # 序列化 K 线（最近 120 个交易日，节省体积）
+        kline = []
+        if not df.empty:
+            tail = df.tail(120)
+            for _, row in tail.iterrows():
+                kline.append({
+                    "date": row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"]),
+                    "open": float(row.get("open", 0)),
+                    "high": float(row.get("high", 0)),
+                    "low": float(row.get("low", 0)),
+                    "close": float(row.get("close", 0)),
+                    "volume": float(row.get("volume", 0)) if "volume" in row else 0.0,
+                })
+
+        items.append({
+            "symbol": sym,
+            "name": name,
+            "market": market,
+            "recent_pct_20d": pct,
+            "ma_signal": signal,
+            "outlook": outlook,
+            "news": [n.to_dict() for n in news[:10]],
+            "kline": kline,
+        })
+
+    report = {"updated_at": now_bj().isoformat(), "items": items}
+    save_snapshot("tracked", "default", report)
+    return report

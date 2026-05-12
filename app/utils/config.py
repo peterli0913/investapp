@@ -1,0 +1,30 @@
+"""统一配置加载（环境变量 + .env）。"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env", override=False)
+
+
+@dataclass(frozen=True)
+class Settings:
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "").strip()
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+
+    daily_update_hhmm: str = os.getenv("DAILY_UPDATE_HHMM", "06:30").strip()
+    timezone: str = os.getenv("TIMEZONE", "Asia/Shanghai").strip()
+
+    db_path: str = os.getenv("DB_PATH", str(ROOT / "app" / "storage" / "stocks.db")).strip()
+
+    @property
+    def llm_enabled(self) -> bool:
+        return bool(self.openai_api_key)
+
+
+settings = Settings()
