@@ -17,17 +17,37 @@ if not payload:
     st.stop()
 
 items = payload.get("items") or []
+data_source = payload.get("data_source", "unknown")
+total = payload.get("total", len(items))
+
+# 数据源标识 + 总数
+src_label = {
+    "akshare": "🟢 akshare（东方财富 / 新浪）",
+    "google_news+llm": "🟡 Google News + AI 提取（兜底）",
+    "none": "🔴 无数据源可用",
+    "unknown": "—",
+}.get(data_source, data_source)
+st.caption(f"数据来源：{src_label} · 抓取 {total} 条新股")
+
 if not items:
-    st.info("当前未抓到港股新股，可稍后再刷新（akshare 接口偶尔不稳定）。")
+    st.info(
+        "本次未抓到港股新股。原因可能是：\n\n"
+        "1. akshare 接口短暂不可用（东方财富 / 新浪都返回空）\n"
+        "2. Google News 没有近期的『港股 招股』相关报道（淡季）\n"
+        "3. LLM 未配置 Key，无法从新闻中提取结构化数据\n\n"
+        "建议稍后再刷新；或到『设置』测试 LLM 连接。"
+    )
     st.stop()
 
 for ipo in items:
-    name = ipo.get("name") or "新股"
-    symbol = ipo.get("symbol", "")
-    price = ipo.get("price_range", "-")
-    list_date = ipo.get("list_date", "-")
-    industry = ipo.get("industry", "-")
-    sponsor = ipo.get("sponsor", "-")
+    name = ipo.get("name") or ipo.get("股票简称") or "新股"
+    symbol = ipo.get("symbol", "") or ipo.get("代码", "")
+    price = ipo.get("price_range", "-") or ipo.get("招股价", "-")
+    list_date = ipo.get("list_date", "-") or ipo.get("上市日期", "-")
+    industry = ipo.get("industry", "-") or ipo.get("行业", "-")
+    sponsor = ipo.get("sponsor", "-") or ipo.get("保荐人", "-")
+    highlight = ipo.get("highlight", "")
+    src_tag = ipo.get("_source", "")
     review = ipo.get("review") or {}
     pros = review.get("pros") or []
     cons = review.get("cons") or []
@@ -37,15 +57,18 @@ for ipo in items:
     pros_html = "<br>".join(f"• {p}" for p in pros) or "-"
     cons_html = "<br>".join(f"• {c}" for c in cons) or "-"
 
+    src_html = f'<span class="tag">{src_tag}</span>' if src_tag else ''
+    highlight_html = (f'<b>🔍 核心看点</b><br>{highlight}<br><br>' if highlight else '')
     st.markdown(
         f"""
         <div class="card">
-            <div class="title">{name} <span style='color:#8B949E;font-size:13px;'>({symbol})</span></div>
-            <div class="body">
+            <div class="title">{name} <span style='color:#8B949E;font-size:13px;'>({symbol})</span> {src_html}</div>
+            <div class="body" style="line-height:1.85;">
                 <b>所属行业</b>：{industry} &nbsp;|&nbsp;
                 <b>招股价</b>：{price} &nbsp;|&nbsp;
                 <b>上市日</b>：{list_date} &nbsp;|&nbsp;
                 <b>保荐人</b>：{sponsor}<br><br>
+                {highlight_html}
                 <b>👍 看点</b><br>{pros_html}<br><br>
                 <b>⚠️ 风险点</b><br>{cons_html}<br><br>
                 <b>📋 申购建议</b>：<span class="tag">{suggestion}</span><br>

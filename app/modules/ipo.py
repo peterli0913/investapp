@@ -1,12 +1,17 @@
 """模块 4：港股打新。
 
-抓港交所/东方财富的港股新股日历，并请 LLM 做优劣势分析与申购建议。
+数据源策略（双轨）：
+    A. akshare 多个接口轮询（东方财富 / 新浪 / 旧版）
+    B. 失败或返回空时回退：用 Google News 抓 "港股 招股 / 港股 IPO" 等关键词，
+       再用 LLM 从新闻里抽出结构化新股清单（标题/招股价/上市日/行业等）
+
+并行送 AI 出申购建议。
 """
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from app.services.llm_client import llm
+from app.services.llm_client import _extract_json, llm
 from app.services.market_data import hk_ipo_calendar
 from app.services.news_feed import fetch_keywords
 from app.storage.db import save_snapshot
@@ -36,16 +41,87 @@ def _normalize_row(row: dict) -> dict:
     return out
 
 
-def build_ipo_report(max_items: int = 8) -> dict:
+def _extract_hk_ipos_from_news() -> list[dict]:
+    """fallback: 从 Google News 抓港股招股新闻，让 LLM 提结构化数据。
+
+    返回与 _normalize_row 同样字段（name / price_range / list_date / industry / sponsor / fund）。
+    """
+    keywords = [
+        "港股 招股", "港股 IPO 招股", "港股 公开发售", "Hong Kong IPO 招股",
+        "港股 新股 上市", "港股 招股 截止", "港股 招股 基石",
+    ]
+    news = fetch_keywords(keywords, lang="zh-CN", country="CN", per=4)
+    if not news:
+        logger.warning("ipo fallback: 无招股相关新闻抓到")
+        return []
+    if not llm.available:
+        logger.info("ipo fallback: LLM 未配置，仅返回新闻条目，跳过结构化提取")
+        return []
+
+    # 让 LLM 从新闻里提取结构化清单
+    titles_block = []
+    for i, n in enumerate(news[:25]):
+        pub = (n.published or "")[:10]
+        titles_block.append(f"[{i}] {pub} {n.title}")
+
+    sys = (
+        "你是港股新股研究员。从下面这堆港股招股相关新闻中，提取出最近正在招股或即将上市的『新股清单』。"
+        "只列出新闻明确提到的、真实存在的港股 IPO 项目。每条新股包括：\n"
+        "- name: 公司名称（中文）\n"
+        "- symbol: 港股代码（如已知；不知道填空字符串）\n"
+        "- industry: 所属行业\n"
+        "- price_range: 招股价区间（如已知）\n"
+        "- list_date: 预计上市日期（如已知）YYYY-MM-DD\n"
+        "- sponsor: 保荐人（如已知）\n"
+        "- fund: 募资规模（如已知）\n"
+        "- highlight: 1-2 句核心看点（基石投资者、行业地位、特殊安排等）\n"
+        "严格输出 JSON：{\"ipos\":[{...}]}。如果没有合适的，输出 {\"ipos\":[]}。"
+    )
+    usr = "招股相关新闻：\n" + "\n".join(titles_block)
+    raw = llm.chat(sys, usr, json_mode=True, max_tokens=2500, tier="fast")
+    data = _extract_json(raw) or {}
+    ipos = data.get("ipos") if isinstance(data, dict) else []
+    cleaned: list[dict] = []
+    for ipo in ipos or []:
+        if not isinstance(ipo, dict) or not ipo.get("name"):
+            continue
+        cleaned.append({
+            "name": ipo.get("name"),
+            "symbol": ipo.get("symbol", ""),
+            "industry": ipo.get("industry", "—"),
+            "price_range": ipo.get("price_range", "—"),
+            "list_date": ipo.get("list_date", "—"),
+            "sponsor": ipo.get("sponsor", "—"),
+            "fund": ipo.get("fund", "—"),
+            "highlight": ipo.get("highlight", ""),
+            "_source": "google_news+llm",
+        })
+    logger.info("ipo fallback: 从新闻 LLM 提取出 %d 条新股", len(cleaned))
+    return cleaned
+
+
+def build_ipo_report(max_items: int = 10) -> dict:
     df = hk_ipo_calendar()
     rows: list[dict] = []
+    data_source = ""
+
     if df is not None and not df.empty:
         for _, r in df.head(max_items).iterrows():
             rows.append(_normalize_row(r.to_dict()))
+        data_source = "akshare"
+        logger.info("build_ipo_report: akshare 返回 %d 条新股", len(rows))
+
+    # akshare 没数据 → 用新闻 + LLM 兜底
+    if not rows:
+        logger.info("build_ipo_report: akshare 无数据，使用新闻 + LLM 兜底")
+        rows = _extract_hk_ipos_from_news()
+        if rows:
+            data_source = "google_news+llm"
 
     def _one(ipo: dict) -> dict:
         name = ipo.get("name") or ipo.get("公司") or "新股"
-        news = fetch_keywords([f"{name} 港股 招股", f"{name} IPO"], lang="zh-CN", country="CN", per=3)
+        news = fetch_keywords([f"{name} 港股 招股", f"{name} IPO"],
+                              lang="zh-CN", country="CN", per=3)
         ipo_with_news = dict(ipo)
         ipo_with_news["news"] = [n.to_dict() for n in news[:5]]
         ipo_with_news["review"] = llm.ipo_review(ipo)
@@ -61,6 +137,12 @@ def build_ipo_report(max_items: int = 8) -> dict:
                 except Exception as e:
                     logger.warning("ipo task failed: %s", e)
 
-    report = {"updated_at": now_bj().isoformat(), "items": enriched}
+    report = {
+        "updated_at": now_bj().isoformat(),
+        "items": enriched,
+        "data_source": data_source or "none",
+        "total": len(enriched),
+    }
     save_snapshot("ipo", "default", report)
+    logger.info("build_ipo_report done: source=%s total=%d", data_source, len(enriched))
     return report

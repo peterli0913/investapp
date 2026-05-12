@@ -96,6 +96,9 @@ for item in items:
     senti_klass = "up" if senti > 0.15 else ("down" if senti < -0.15 else "neutral")
     metrics = item.get("metrics") or {}
     currency = _market_currency(item.get("market", ""))
+    status = item.get("status", "ok")
+    errors = item.get("errors") or []
+    kline = item.get("kline") or []
 
     # 顶部：股票名 + 标签
     tag_html = (
@@ -115,22 +118,35 @@ for item in items:
         unsafe_allow_html=True,
     )
 
-    # 今日股价 / 涨跌 / 成交量 4 个 metric
-    if metrics:
-        last_close = metrics.get("last_close")
-        today_pct = metrics.get("today_pct")
-        m_cols = st.columns(4)
-        m_cols[0].metric(
-            "最新价",
-            f"{currency}{last_close:.2f}" if last_close else "—",
-            f"{today_pct:+.2f}%" if today_pct is not None else None,
+    # 数据异常告警
+    if status != "ok" or errors:
+        msg = (
+            f"⚠️ **{item['name']}**（{item['symbol']}）"
+            f"行情/数据获取存在问题：\n\n" +
+            "\n".join(f"- {e}" for e in errors) +
+            "\n\n**可能的修复方向**：" +
+            ("\n- 如果是港股新股（如 02590 极智嘉），上市时间短可能数据未覆盖；可去『设置 / 自选股』暂时移除并改用大盘股测试。\n"
+             if (item.get("market") == "hk") else "") +
+            "\n- 检查代码是否正确（A 股 6 位 / 港股 4-5 位 / 美股字母 ticker）。\n"
+            "- 短暂稍后再点『立即刷新』，数据源（东方财富 / 雅虎）可能临时限流。"
         )
-        m_cols[1].metric(
-            f"日内高 / 低 ({metrics.get('last_date','-')})",
-            f"{metrics.get('last_high', 0):.2f} / {metrics.get('last_low', 0):.2f}" if last_close else "—",
-        )
-        m_cols[2].metric("当日成交量", metrics.get("volume_str", "—"))
-        m_cols[3].metric("当日成交额", metrics.get("amount_str", "—"))
+        st.warning(msg)
+
+    # 今日股价 / 涨跌 / 成交量 4 个 metric（即使没数据也展示空槽位）
+    last_close = metrics.get("last_close")
+    today_pct = metrics.get("today_pct")
+    m_cols = st.columns(4)
+    m_cols[0].metric(
+        "最新价",
+        f"{currency}{last_close:.2f}" if last_close else "—",
+        f"{today_pct:+.2f}%" if today_pct is not None else None,
+    )
+    m_cols[1].metric(
+        f"日内高 / 低 ({metrics.get('last_date','-')})",
+        f"{metrics.get('last_high', 0):.2f} / {metrics.get('last_low', 0):.2f}" if last_close else "—",
+    )
+    m_cols[2].metric("当日成交量", metrics.get("volume_str", "—"))
+    m_cols[3].metric("当日成交额", metrics.get("amount_str", "—"))
 
     # AI 建议
     st.markdown(
@@ -146,7 +162,11 @@ for item in items:
         unsafe_allow_html=True,
     )
 
-    st.plotly_chart(_kline_chart(item.get("kline") or []), use_container_width=True)
+    # K 线：有数据画图，没数据给明确提示
+    if kline:
+        st.plotly_chart(_kline_chart(kline), use_container_width=True)
+    else:
+        st.info(f"📊 **{item['name']}** 暂无可用的 K 线数据。原因见上方告警；其余信息（新闻、AI 简评）仍然可用。")
     with st.expander(f"查看 {item['name']} 来源新闻（{len(item.get('news') or [])}）"):
         for n in item.get("news") or []:
             title = n.get("title") or ""

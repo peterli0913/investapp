@@ -185,6 +185,66 @@ def test_parse_events_resolves_refs():
     assert "refs" not in parsed[0]
 
 
+# ---------- tracked_stocks 错误路径 ----------
+def test_process_one_stock_no_data(monkeypatch):
+    """行情接口完全无数据时，应返回 status=no_data 且不抛错。"""
+    import app.modules.tracked_stocks as ts
+    monkeypatch.setattr(ts, "stock_hist", lambda *a, **kw: pd.DataFrame())
+    monkeypatch.setattr(ts, "fetch_keywords", lambda *a, **kw: [])
+    r = ts._process_one_stock({"symbol": "XXXX", "name": "测试", "market": "hk"})
+    assert r["status"] == "no_data"
+    assert r["kline"] == []
+    assert "未获取到历史 K 线" in r["errors"][0]
+    # outlook 应使用启发式回退（不抛错）
+    assert "trend" in r["outlook"]
+    assert "suggestion" in r["outlook"]
+
+
+def test_process_one_stock_partial(monkeypatch):
+    """有行情，但新闻抓取异常 → status=partial（有数据但有 errors）。"""
+    import app.modules.tracked_stocks as ts
+    np.random.seed(0)
+    n = 60
+    prices = 100 + np.cumsum(np.random.randn(n))
+    df = pd.DataFrame({
+        "date": pd.date_range("2024-01-01", periods=n, freq="B"),
+        "open": prices, "close": prices, "high": prices * 1.01, "low": prices * 0.99,
+        "volume": np.full(n, 1e6), "amount": np.full(n, 1e10),
+    })
+    monkeypatch.setattr(ts, "stock_hist", lambda *a, **kw: df)
+
+    def _fail_news(*a, **kw):
+        raise RuntimeError("RSS timeout")
+    monkeypatch.setattr(ts, "fetch_keywords", _fail_news)
+
+    r = ts._process_one_stock({"symbol": "002613", "name": "胜宏科技", "market": "a"})
+    assert r["status"] == "partial"
+    assert any("新闻抓取异常" in e for e in r["errors"])
+    assert r["kline"]  # K 线有数据
+    assert r["metrics"]  # metrics 有数据
+
+
+def test_market_data_hk_code_fallback_candidates():
+    """hk_stock_hist 内部应该尝试多种代码格式。"""
+    import app.services.market_data as md
+    tried: list[str] = []
+
+    def _fake_ak_hk_hist(symbol, **kw):
+        tried.append(symbol)
+        return pd.DataFrame()
+
+    import sys
+    fake_ak = type(sys)("akshare")
+    fake_ak.stock_hk_hist = _fake_ak_hk_hist
+    sys.modules["akshare"] = fake_ak
+    try:
+        md.hk_stock_hist("9992")
+        # 应该尝试 9992 / 09992 / 9992 至少一个
+        assert any(c in tried for c in ("9992", "09992"))
+    finally:
+        sys.modules.pop("akshare", None)
+
+
 def test_backtest_smoke_synthetic(monkeypatch):
     """绕过真实数据源，用 patched stock_hist 跑完整回测流程。"""
     np.random.seed(42)

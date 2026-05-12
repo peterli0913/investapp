@@ -100,39 +100,85 @@ def _today_metrics(df) -> dict:
 
 
 def _process_one_stock(w: dict) -> dict:
+    """处理单只自选股。任何步骤失败都不抛错，把错误写进 status 字段返回。"""
     sym, name, market = w["symbol"], w["name"], w["market"]
-    df = stock_hist(sym, market)
-    pct = _recent_pct(df)
-    signal = _ma_signal(df)
-    metrics = _today_metrics(df)
-    lang, country = _news_lang(market)
-    news = fetch_keywords([name, f"{name} 股价"], lang=lang, country=country, per=5)
-    titles = [n.title for n in news if n.title]
-    sentiment = headlines_sentiment(titles)
-    ens_signal = _signal_ensemble(df, sentiment=sentiment) if not df.empty else 0
-    ens_text = {1: "看多", -1: "看空", 0: "中性"}[ens_signal]
-    outlook = llm.stock_outlook(name, pct, titles,
-                                f"{signal} · 多因子ensemble:{ens_text} · 情绪:{sentiment:+.2f}")
-    outlook["ensemble_signal"] = ens_text
-    outlook["sentiment"] = sentiment
+    errors: list[str] = []
 
+    # 1) 行情
+    df = None
+    try:
+        df = stock_hist(sym, market)
+    except Exception as e:
+        errors.append(f"行情接口异常: {e}")
+        df = None
+
+    has_data = df is not None and not df.empty
+    if not has_data:
+        errors.append("未获取到历史 K 线（可能是新股 / 代码不识别 / 数据源临时不可用）")
+
+    pct = _recent_pct(df) if has_data else 0.0
+    signal = _ma_signal(df) if has_data else "数据不足"
+    metrics = _today_metrics(df) if has_data else {}
+
+    # 2) 新闻
+    news = []
+    titles = []
+    try:
+        lang, country = _news_lang(market)
+        news = fetch_keywords([name, f"{name} 股价"], lang=lang, country=country, per=5)
+        titles = [n.title for n in news if n.title]
+    except Exception as e:
+        errors.append(f"新闻抓取异常: {e}")
+
+    # 3) 情绪 + ensemble + LLM 建议
+    sentiment = 0.0
+    ens_text = "中性"
+    outlook: dict = {}
+    try:
+        sentiment = headlines_sentiment(titles)
+        ens_signal = _signal_ensemble(df, sentiment=sentiment) if has_data else 0
+        ens_text = {1: "看多", -1: "看空", 0: "中性"}[ens_signal]
+        outlook = llm.stock_outlook(
+            name, pct, titles,
+            f"{signal} · 多因子ensemble:{ens_text} · 情绪:{sentiment:+.2f}",
+        )
+        outlook["ensemble_signal"] = ens_text
+        outlook["sentiment"] = sentiment
+    except Exception as e:
+        errors.append(f"分析阶段异常: {e}")
+        outlook = {
+            "trend": "—",
+            "rationale": "由于行情或新闻获取失败，无法生成分析。",
+            "suggestion": "请稍后再点刷新；如持续失败，请到『设置』测试 LLM 连接并查看 Manage app → Logs。",
+            "ensemble_signal": ens_text,
+            "sentiment": sentiment,
+        }
+
+    # 4) K 线序列化
     kline = []
-    if not df.empty:
-        tail = df.tail(120)
-        for _, row in tail.iterrows():
-            kline.append({
-                "date": row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"]),
-                "open": float(row.get("open", 0)),
-                "high": float(row.get("high", 0)),
-                "low": float(row.get("low", 0)),
-                "close": float(row.get("close", 0)),
-                "volume": float(row.get("volume", 0)) if "volume" in row else 0.0,
-            })
+    if has_data:
+        try:
+            tail = df.tail(120)
+            for _, row in tail.iterrows():
+                kline.append({
+                    "date": row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"]),
+                    "open": float(row.get("open", 0)),
+                    "high": float(row.get("high", 0)),
+                    "low": float(row.get("low", 0)),
+                    "close": float(row.get("close", 0)),
+                    "volume": float(row.get("volume", 0)) if "volume" in row else 0.0,
+                })
+        except Exception as e:
+            errors.append(f"K线序列化异常: {e}")
+
+    status = "ok" if has_data and not errors else ("no_data" if not has_data else "partial")
 
     return {
         "symbol": sym,
         "name": name,
         "market": market,
+        "status": status,
+        "errors": errors,
         "recent_pct_20d": pct,
         "ma_signal": signal,
         "sentiment": sentiment,
