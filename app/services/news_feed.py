@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Iterable
@@ -17,6 +18,9 @@ from app.utils.logger import get_logger
 from app.utils.tz import BEIJING
 
 logger = get_logger("news")
+
+# 全局线程池，所有并行 HTTP 共享，避免每次 build_*_report 都开新池
+_HTTP_POOL = ThreadPoolExecutor(max_workers=24, thread_name_prefix="rss")
 
 # 通用财经源（中英文混合）
 DEFAULT_FEEDS: dict[str, list[str]] = {
@@ -62,9 +66,12 @@ def _to_bj_iso(time_struct) -> str:
         return ""
 
 
-@cached(cache=TTLCache(maxsize=128, ttl=600))
-def fetch_feed(url: str, timeout: int = 10) -> list[NewsItem]:
-    """抓单个 RSS。带 10 分钟内存缓存，避免重复请求。"""
+@cached(cache=TTLCache(maxsize=256, ttl=1800))  # 30 分钟缓存
+def fetch_feed(url: str, timeout: int = 6) -> list[NewsItem]:
+    """抓单个 RSS。带 30 分钟内存缓存，避免重复请求。
+
+    timeout 6 秒：宁可个别源失败也别拖累整体；缓存 30 分钟所以这里宁短勿长。
+    """
     try:
         resp = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0 StockAssistant/1.0"})
         resp.raise_for_status()
@@ -96,21 +103,40 @@ def google_news_rss(query: str, lang: str = "zh-CN", country: str = "CN") -> lis
 
 
 def fetch_many(urls: Iterable[str]) -> list[NewsItem]:
+    """并行抓多个 RSS。比串行快 5-10 倍。"""
+    urls = list(urls)
+    if not urls:
+        return []
+    futures = [_HTTP_POOL.submit(fetch_feed, u) for u in urls]
     out: list[NewsItem] = []
-    for u in urls:
-        out.extend(fetch_feed(u))
+    for fut in as_completed(futures):
+        try:
+            out.extend(fut.result())
+        except Exception as e:
+            logger.warning("fetch_many task failed: %s", e)
     return out
 
 
 def fetch_keywords(keywords: list[str], lang: str = "zh-CN", country: str = "CN", per: int = 8) -> list[NewsItem]:
-    out: list[NewsItem] = []
-    for kw in keywords:
+    """并行抓多个关键词的 Google News。"""
+    if not keywords:
+        return []
+
+    def _one(kw: str) -> list[NewsItem]:
         items = google_news_rss(kw, lang=lang, country=country)
-        out.extend(items[:per])
+        return items[:per]
+
+    futures = [_HTTP_POOL.submit(_one, kw) for kw in keywords]
+    out: list[NewsItem] = []
+    for fut in as_completed(futures):
+        try:
+            out.extend(fut.result())
+        except Exception as e:
+            logger.warning("fetch_keywords task failed: %s", e)
     seen = set()
     dedup = []
     for it in out:
-        if it.link in seen:
+        if not it.link or it.link in seen:
             continue
         seen.add(it.link)
         dedup.append(it)

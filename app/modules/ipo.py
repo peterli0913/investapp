@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from app.services.llm_client import llm
 from app.services.market_data import hk_ipo_calendar
 from app.services.news_feed import fetch_keywords
@@ -41,15 +43,23 @@ def build_ipo_report(max_items: int = 8) -> dict:
         for _, r in df.head(max_items).iterrows():
             rows.append(_normalize_row(r.to_dict()))
 
-    enriched = []
-    for ipo in rows:
+    def _one(ipo: dict) -> dict:
         name = ipo.get("name") or ipo.get("公司") or "新股"
         news = fetch_keywords([f"{name} 港股 招股", f"{name} IPO"], lang="zh-CN", country="CN", per=3)
         ipo_with_news = dict(ipo)
         ipo_with_news["news"] = [n.to_dict() for n in news[:5]]
-        review = llm.ipo_review(ipo)
-        ipo_with_news["review"] = review
-        enriched.append(ipo_with_news)
+        ipo_with_news["review"] = llm.ipo_review(ipo)
+        return ipo_with_news
+
+    enriched: list[dict] = []
+    if rows:
+        with ThreadPoolExecutor(max_workers=min(8, len(rows)), thread_name_prefix="ipo") as pool:
+            futures = [pool.submit(_one, ipo) for ipo in rows]
+            for fut in as_completed(futures):
+                try:
+                    enriched.append(fut.result())
+                except Exception as e:
+                    logger.warning("ipo task failed: %s", e)
 
     report = {"updated_at": now_bj().isoformat(), "items": enriched}
     save_snapshot("ipo", "default", report)

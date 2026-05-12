@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from app.services.llm_client import llm
 from app.services.market_data import a_new_stock_calendar, hk_ipo_calendar
 from app.services.news_feed import fetch_keywords, google_news_rss
@@ -41,18 +43,28 @@ def _pick_name(row: dict) -> str:
 
 def build_recommendation_report() -> dict:
     pool = _pool()
-    enriched = []
-    for row in pool:
+
+    def _one(row: dict) -> dict:
         name = _pick_name(row)
         news = google_news_rss(f"{name} 新股")[:4]
         review = llm.ipo_review(row)
-        enriched.append({
+        return {
             "market": row.get("市场", ""),
             "name": name,
             "raw": row,
             "news": [n.to_dict() for n in news],
             "review": review,
-        })
+        }
+
+    enriched: list[dict] = []
+    if pool:
+        with ThreadPoolExecutor(max_workers=min(10, len(pool)), thread_name_prefix="reco") as p:
+            futures = [p.submit(_one, row) for row in pool]
+            for fut in as_completed(futures):
+                try:
+                    enriched.append(fut.result())
+                except Exception as e:
+                    logger.warning("reco task failed: %s", e)
 
     # 简单"推荐"筛选：suggestion 含 "积极" 或 "申购"
     top = [e for e in enriched if any(k in (e["review"].get("suggestion") or "")

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.services.llm_client import llm
@@ -37,14 +38,38 @@ def _lang_country_for_market(market: str) -> tuple[str, str]:
     return "zh-CN", "CN"
 
 
-def build_sector_report() -> dict[str, Any]:
-    """聚合每个市场 × 每个板块的新闻 + 板块涨跌幅 + AI 总结。"""
-    report: dict[str, Any] = {
-        "updated_at": now_bj().isoformat(),
-        "markets": {},
+def _process_one(market: str, sector: str, kws: list[str], rank_map: dict[str, dict]) -> tuple[str, str, dict]:
+    """处理单个 (市场, 板块) 的新闻 + LLM 总结。可并行调用。"""
+    lang, country = _lang_country_for_market(market)
+    news = fetch_keywords([f"{sector} {market}"] + kws, lang=lang, country=country, per=4)
+    titles = [n.title for n in news if n.title]
+    summary = llm.summarize_sector(f"{market} - {sector}", titles)
+
+    pct = None
+    if market == "A股":
+        for k, v in rank_map.items():
+            if sector in k or k in sector:
+                pct = v.get("pct")
+                break
+
+    return market, sector, {
+        "pct": pct,
+        "summary": summary,
+        "news": [n.to_dict() for n in news[:10]],
     }
 
-    # A 股板块行情
+
+def build_sector_report() -> dict[str, Any]:
+    """聚合每个市场 × 每个板块的新闻 + 板块涨跌幅 + AI 总结。
+
+    优化：18 个 (市场, 板块) 任务并行（每个任务内部已经并行抓 RSS + 调 LLM）。
+    """
+    report: dict[str, Any] = {
+        "updated_at": now_bj().isoformat(),
+        "markets": {market: {} for market in MARKETS},
+    }
+
+    # A 股板块行情（一次性串行抓即可，akshare 不支持并发太多）
     concept = sector_concept_rank()
     industry = sector_industry_rank()
     rank_map: dict[str, dict] = {}
@@ -59,28 +84,21 @@ def build_sector_report() -> dict[str, Any]:
                 "pct": float(row[chg_col]) if chg_col and chg_col in row and row[chg_col] == row[chg_col] else None,
             }
 
+    # 18 个 (市场, 板块) 任务并行
+    tasks: list[tuple[str, str, list[str]]] = []
     for market in MARKETS:
-        lang, country = _lang_country_for_market(market)
-        market_data: dict[str, Any] = {}
         for sector, kws in SECTOR_KEYWORDS.items():
-            news = fetch_keywords([f"{sector} {market}"] + kws, lang=lang, country=country, per=4)
-            titles = [n.title for n in news if n.title]
-            summary = llm.summarize_sector(f"{market} - {sector}", titles)
+            tasks.append((market, sector, kws))
 
-            # 行情匹配（仅 A 股有概念板块涨跌幅数据）
-            pct = None
-            if market == "A股":
-                for k, v in rank_map.items():
-                    if sector in k or k in sector:
-                        pct = v.get("pct")
-                        break
-
-            market_data[sector] = {
-                "pct": pct,
-                "summary": summary,
-                "news": [n.to_dict() for n in news[:10]],
-            }
-        report["markets"][market] = market_data
+    # max_workers 不要超过 12：DeepSeek 单账号也有并发限制，过高反而被限流
+    with ThreadPoolExecutor(max_workers=12, thread_name_prefix="sector") as pool:
+        futures = [pool.submit(_process_one, m, s, kws, rank_map) for m, s, kws in tasks]
+        for fut in as_completed(futures):
+            try:
+                market, sector, data = fut.result()
+                report["markets"][market][sector] = data
+            except Exception as e:
+                logger.warning("sector task failed: %s", e)
 
     save_snapshot("sectors", "default", report)
     logger.info("sector report built at %s", report["updated_at"])

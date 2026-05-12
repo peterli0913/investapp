@@ -78,9 +78,20 @@ def render_refresh_bar(module_key: str, label: str) -> Any:
     with cols[3]:
         clicked = st.button("立即刷新", key=f"refresh_{module_key}", use_container_width=True)
     if clicked:
-        with st.spinner(f"正在刷新 {label} …"):
+        import time
+        t0 = time.time()
+        # 显示具体步骤说明，避免干瞪眼
+        hint = {
+            "sectors": "并行抓 3 市场 × 6 板块的新闻 + AI 总结（约 15-40 秒）",
+            "taco": "并行抓中英文 Trump 新闻 + AI 影响分析（约 5-15 秒）",
+            "tracked": "并行抓自选股的行情 + 新闻 + AI 建议（约 10-30 秒）",
+            "ipo": "抓港股新股日历 + 并行 AI 评估（约 10-30 秒）",
+            "recommendations": "抓 A 股+港股新股池 + 并行 AI 评级（约 20-60 秒）",
+        }.get(module_key, "")
+        with st.spinner(f"正在刷新 {label} … {hint}"):
             new_payload = run_module(module_key)
-        st.success(f"{label} 已更新于 {fmt_bj()}")
+        elapsed = time.time() - t0
+        st.success(f"✅ {label} 已更新 · 耗时 {elapsed:.1f} 秒 · {fmt_bj()}")
         payload = new_payload or payload
         updated_at = now_bj().isoformat()
     if not settings.llm_enabled:

@@ -5,6 +5,8 @@ TACO = "Trump Always Chickens Out"，金融圈对其反复政策的戏称。
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from app.services.llm_client import llm
 from app.services.news_feed import fetch_keywords
 from app.storage.db import save_snapshot
@@ -23,8 +25,12 @@ TRUMP_KEYWORDS_ZH = [
 
 
 def build_taco_report() -> dict:
-    en_news = fetch_keywords(TRUMP_KEYWORDS_EN, lang="en-US", country="US", per=6)
-    zh_news = fetch_keywords(TRUMP_KEYWORDS_ZH, lang="zh-CN", country="CN", per=5)
+    # 中英文新闻并行抓
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="taco") as pool:
+        f_en = pool.submit(fetch_keywords, TRUMP_KEYWORDS_EN, "en-US", "US", 6)
+        f_zh = pool.submit(fetch_keywords, TRUMP_KEYWORDS_ZH, "zh-CN", "CN", 5)
+        en_news = f_en.result()
+        zh_news = f_zh.result()
     all_news = en_news + zh_news
     seen = set()
     dedup = []
