@@ -147,7 +147,11 @@ class LLMClient:
     def summarize_sector(self, sector: str, news_titles: list[str]) -> str:
         if not self._client or not news_titles:
             return self._fallback_sector_summary(sector, news_titles)
-        sys = "你是资深的中文证券分析师，请用专业、克制的语气总结板块动态，2-4 句话，突出方向、催化剂、风险。"
+        sys = (
+            "你是个会聊天的股市观察员，用大白话给普通投资者讲板块最近发生了啥。"
+            "2-4 句话讲清楚：最近这个板块在涨还是在跌，主要因为啥（用通俗例子和比喻），"
+            "有啥需要注意的风险。语气要像朋友聊天，避免堆砌专业术语。"
+        )
         usr = f"板块：{sector}\n最近相关新闻标题：\n" + "\n".join(f"- {t}" for t in news_titles[:20])
         out = self.chat(sys, usr, max_tokens=500, tier="fast")
         return out or self._fallback_sector_summary(sector, news_titles)
@@ -155,11 +159,58 @@ class LLMClient:
     def analyze_trump_impact(self, news_titles: list[str]) -> str:
         if not self._client or not news_titles:
             return self._fallback_trump(news_titles)
-        sys = "你是宏观策略分析师。基于特朗普相关新闻，分析对美股、A股、港股的方向性影响。结构：核心事件、市场逻辑、对各市场短期影响、需关注的风险。语气克制，控制在 250 字内。"
+        sys = (
+            "你是个会用大白话讲宏观的策略师。基于特朗普最近的新闻，告诉普通投资者："
+            "(1) 他最近在折腾啥；(2) 这事按常理走会怎么影响美股、A股、港股；"
+            "(3) 哪些股票/板块要小心，哪些可能反而沾光。"
+            "语气要像在饭桌上聊新闻，控制 300 字内。不要套用『核心事件/市场逻辑/影响/风险』这种生硬框架，"
+            "直接讲故事讲透就行。"
+        )
         usr = "新闻标题：\n" + "\n".join(f"- {t}" for t in news_titles[:25])
-        # 涉及全局市场判断，用 deep 思考模式
-        out = self.chat(sys, usr, max_tokens=800, tier="deep")
+        out = self.chat(sys, usr, max_tokens=900, tier="deep")
         return out or self._fallback_trump(news_titles)
+
+    def extract_trump_events(self, news_items: list[dict]) -> list[dict]:
+        """从新闻里抽出最近的特朗普事件，每个事件包含日期、标题、通俗解读、对市场的影响。
+
+        返回结构化 JSON 列表，便于 UI 渲染成时间轴。
+        """
+        if not self._client or not news_items:
+            return self._fallback_trump_events(news_items)
+        # 给 LLM 紧凑的输入：标题 + 发布时间 + 链接索引
+        compact = []
+        for i, n in enumerate(news_items[:30]):
+            compact.append(f"[{i}] {n.get('published','')[:10]} {n.get('title','')}")
+        sys = (
+            "你是个会用大白话讲新闻的财经编辑。任务：从下面这堆特朗普相关新闻里，"
+            "整理出最近最重要的 5-8 个『事件』。"
+            "每个事件要做到：1) 一句话标题；2) 用 1-2 句大白话告诉普通人这事是怎么回事（举例、打比方都行）；"
+            "3) 给出对股市的『简明影响』（比如：『美股短期会震，受影响的是芯片股』）。"
+            "严格输出 JSON："
+            "{\"events\":[{\"date\":\"YYYY-MM-DD\",\"title\":\"...\",\"plain\":\"...\",\"impact\":\"...\",\"refs\":[新闻索引]}]}"
+        )
+        usr = "新闻列表：\n" + "\n".join(compact)
+        raw = self.chat(sys, usr, json_mode=True, max_tokens=1500, tier="deep")
+        try:
+            data = json.loads(raw)
+            events = data.get("events") or []
+            # 把 refs 索引换成实际链接，方便 UI 渲染
+            for ev in events:
+                refs = ev.get("refs") or []
+                ev["links"] = []
+                for idx in refs:
+                    try:
+                        idx_int = int(idx)
+                        if 0 <= idx_int < len(news_items):
+                            n = news_items[idx_int]
+                            ev["links"].append({"title": n.get("title",""), "url": n.get("link","")})
+                    except Exception:
+                        continue
+                ev.pop("refs", None)
+            return events
+        except Exception as e:
+            logger.warning("extract_trump_events parse failed: %s", e)
+            return self._fallback_trump_events(news_items)
 
     def stock_outlook(self, name: str, recent_pct: float, news_titles: list[str],
                       ma_signal: str) -> dict:
@@ -167,9 +218,12 @@ class LLMClient:
         if not self._client:
             return self._fallback_stock(name, recent_pct, news_titles, ma_signal)
         sys = (
-            "你是中国市场的专业股票分析师。基于近期涨跌幅、均线信号、新闻舆情，"
-            "给出短期（1-2 周）趋势判断与可执行操作建议。"
-            "严格输出 JSON：{\"trend\":\"上行/震荡/下行\",\"rationale\":\"中文 1-2 句\",\"suggestion\":\"中文 1 句具体建议\"}。"
+            "你是个会跟普通散户聊天的股市观察员。基于近期涨跌、均线、新闻舆情，"
+            "给出短期（1-2 周）的趋势判断和操作建议。"
+            "rationale 和 suggestion 都用大白话，像朋友提醒：『最近热度起来了，可以拿着别动』、"
+            "『回到 XX 元附近再考虑加点』这种。避免『建议持仓比例不超过 30%』这种生硬话。"
+            "严格输出 JSON：{\"trend\":\"上行/震荡/下行\",\"rationale\":\"中文 1-2 句大白话\","
+            "\"suggestion\":\"中文 1 句具体建议，能直接照做\"}。"
         )
         usr = (
             f"股票：{name}\n近 20 日累计涨跌幅：{recent_pct:.2f}%\n"
@@ -190,9 +244,11 @@ class LLMClient:
         if not self._client:
             return self._fallback_ipo(ipo)
         sys = (
-            "你是港股新股研究员。结合行业、估值、基石投资者、市场情绪，"
+            "你是个会用大白话讲新股的研究员，专门给散户讲清楚要不要打新。"
+            "结合行业前景、估值是不是太贵、基石投资者强不强、市场情绪好不好，"
+            "用普通人听得懂的话讲。优势/劣势都用具体例子和比喻，避免堆术语。"
             "输出 JSON：{\"pros\":[\"优势1\",\"优势2\"],\"cons\":[\"劣势1\"],"
-            "\"suggestion\":\"建议（积极申购/谨慎申购/观望/不建议）\",\"rationale\":\"中文 1-2 句\"}。"
+            "\"suggestion\":\"建议（积极申购/谨慎申购/观望/不建议）\",\"rationale\":\"中文 1-2 句大白话讲清楚为啥\"}。"
         )
         usr = "新股资料：\n" + json.dumps(ipo, ensure_ascii=False, indent=2)
         raw = self.chat(sys, usr, json_mode=True, max_tokens=600, tier="deep")
@@ -206,48 +262,63 @@ class LLMClient:
         except Exception:
             return self._fallback_ipo(ipo)
 
+    @staticmethod
+    def _fallback_trump_events(news_items: list[dict]) -> list[dict]:
+        events = []
+        for n in news_items[:6]:
+            events.append({
+                "date": (n.get("published") or "")[:10],
+                "title": n.get("title") or "未知事件",
+                "plain": "（未配置 LLM，仅显示新闻标题，无法生成大白话解读）",
+                "impact": "—",
+                "links": [{"title": n.get("title",""), "url": n.get("link","")}],
+            })
+        return events
+
     # ---------- 启发式回退 ----------
     @staticmethod
     def _fallback_sector_summary(sector: str, titles: list[str]) -> str:
         if not titles:
-            return f"暂未获取到 {sector} 的最新新闻。请稍后手动刷新或检查网络。"
+            return f"还没抓到 {sector} 的最新新闻。一会儿再点刷新试试。"
         top = "；".join(t for t in titles[:3] if t)
-        return f"{sector} 近期关注点：{top}。（启发式总结：未配置 LLM Key，仅拼接最新标题。）"
+        return f"{sector} 最近的看点：{top}。（提示：还没配 AI Key，这里只是拼了几条标题。）"
 
     @staticmethod
     def _fallback_trump(titles: list[str]) -> str:
         if not titles:
-            return "暂未获取到 Trump 相关新闻。"
+            return "还没抓到特朗普的相关新闻。"
         head = "；".join(t for t in titles[:3] if t)
         return (
-            f"近期 Trump 相关动态：{head}。\n"
-            "通用框架：关税/制裁言论 → 风险资产承压、避险走强；减税/放松监管 → 美股估值修复、"
-            "对华科技限制升级 → A 股科技板块波动加剧。请结合具体新闻判断。"
+            f"特朗普最近在干啥：{head}。\n\n"
+            "简单理解：他要是搞关税/制裁，风险资产（股票、加密币）会震荡，避险资产（黄金、美债）会涨；"
+            "他要是减税/松监管，美股估值会修复；"
+            "他要是对中国科技下手，A 股 / 港股科技板块短期会抖。\n"
+            "（提示：还没配 AI Key，没法给具体事件做大白话解读。）"
         )
 
     @staticmethod
     def _fallback_stock(name: str, recent_pct: float, titles: list[str], ma_signal: str) -> dict:
         if recent_pct > 8:
             trend = "上行"
-            suggestion = "短期偏强，可持有，回调至 5/20 日均线再考虑加仓。"
+            suggestion = "短期挺强，先拿着别动；想加仓等回到 5/20 日均线附近。"
         elif recent_pct < -8:
             trend = "下行"
-            suggestion = "短期偏弱，建议观望或减仓至轻仓。"
+            suggestion = "短期偏弱，先观望或者减一些，别急着抄底。"
         else:
             trend = "震荡"
-            suggestion = "区间操作，等待方向选择。"
-        rationale = f"近 20 日涨跌幅 {recent_pct:.2f}%，均线信号：{ma_signal}。"
+            suggestion = "在区间里磨，等方向出来再动手。"
+        rationale = f"近 20 天涨了 {recent_pct:.2f}%，均线信号：{ma_signal}。"
         if titles:
-            rationale += f" 关注消息：{titles[0]}。"
+            rationale += f" 最近相关消息：{titles[0]}。"
         return {"trend": trend, "rationale": rationale, "suggestion": suggestion}
 
     @staticmethod
     def _fallback_ipo(ipo: dict) -> dict:
         return {
-            "pros": ["公开发行渠道明确"],
-            "cons": ["未配置 LLM，无法做深度分析"],
+            "pros": ["—"],
+            "cons": ["还没配 AI Key，没法做深度分析"],
             "suggestion": "观望",
-            "rationale": f"未配置 LLM，仅返回基础信息：{ipo.get('name', ipo.get('股票简称', ''))}",
+            "rationale": f"还没配 AI Key，仅返回基础信息：{ipo.get('name', ipo.get('股票简称', ''))}",
         }
 
 

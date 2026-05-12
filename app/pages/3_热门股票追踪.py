@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 from app.ui_common import bootstrap_once, hero, pct_html, render_refresh_bar
 
 bootstrap_once()
-hero("📊 热门股票追踪",
-     "初始关注：胜宏科技 / 极智嘉 / 泡泡马特。可在『设置 / 自选股』中增删。")
+hero("📊 我的关注股 · 每日动态 + 操作建议",
+     "默认盯着这三只：胜宏科技 / 极智嘉 / 泡泡玛特。想换其它的去『设置 / 自选股』加。")
 
 payload, _ = render_refresh_bar("tracked", "热门股票追踪")
 st.markdown("---")
@@ -25,32 +26,54 @@ if not items:
 
 
 def _kline_chart(kline: list[dict]) -> go.Figure:
-    df = pd.DataFrame(kline)
-    if df.empty:
+    """K 线 + 均线 + 成交量子图。"""
+    if not kline:
         fig = go.Figure()
         fig.add_annotation(text="无 K 线数据", showarrow=False)
         return fig
+    df = pd.DataFrame(kline)
     df["date"] = pd.to_datetime(df["date"])
-    fig = go.Figure(data=[go.Candlestick(
+
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        row_heights=[0.72, 0.28], vertical_spacing=0.02,
+        subplot_titles=("", ""),
+    )
+    # K 线
+    fig.add_trace(go.Candlestick(
         x=df["date"],
         open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         increasing_line_color="#E74C3C",
         decreasing_line_color="#27AE60",
         name="K线",
-    )])
+        showlegend=False,
+    ), row=1, col=1)
     # 均线
-    for w, color in ((5, "#E5B864"), (20, "#8B949E")):
+    for w, color in ((5, "#E5B864"), (20, "#8B949E"), (60, "#3F88C5")):
         if len(df) >= w:
             ma = df["close"].rolling(w).mean()
-            fig.add_trace(go.Scatter(x=df["date"], y=ma, mode="lines",
-                                     name=f"MA{w}", line=dict(color=color, width=1.2)))
+            fig.add_trace(go.Scatter(
+                x=df["date"], y=ma, mode="lines",
+                name=f"MA{w}", line=dict(color=color, width=1.2),
+            ), row=1, col=1)
+    # 成交量（红涨绿跌）
+    vol_colors = ["#E74C3C" if c >= o else "#27AE60"
+                  for c, o in zip(df["close"], df["open"])]
+    fig.add_trace(go.Bar(
+        x=df["date"], y=df["volume"],
+        marker_color=vol_colors,
+        name="成交量",
+        showlegend=False,
+    ), row=2, col=1)
+
     fig.update_layout(
-        height=360,
-        margin=dict(l=10, r=10, t=20, b=10),
+        height=480,
+        margin=dict(l=10, r=10, t=10, b=10),
         paper_bgcolor="#0E1117",
         plot_bgcolor="#0E1117",
         font=dict(color="#E6EDF3"),
         xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     fig.update_xaxes(gridcolor="#2A2F3A")
     fig.update_yaxes(gridcolor="#2A2F3A")

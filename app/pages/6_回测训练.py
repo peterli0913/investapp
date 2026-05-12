@@ -20,8 +20,8 @@ from app.ui_common import bootstrap_once, hero, inject_theme
 
 bootstrap_once()
 inject_theme()
-hero("🧪 回测训练 · 策略验证",
-     "7 种策略横向对比 · 1 年训练 + 1 年样本外测试 · 重点诊断「1 年前预测 → 11 个月前真实」。")
+hero("🧪 看看 AI 的判断准不准",
+     "用过去两年的真实行情来模拟：如果当时按这套策略买卖，胜率有多高、能赚多少。重点是『1 年前预测 → 11 个月前的真实涨跌』。")
 
 wl = get_watchlist()
 if not wl:

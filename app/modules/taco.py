@@ -41,12 +41,21 @@ def build_taco_report() -> dict:
         dedup.append(n)
 
     titles = [n.title for n in dedup if n.title]
-    analysis = llm.analyze_trump_impact(titles)
+    news_dicts = [n.to_dict() for n in dedup[:30]]
+
+    # 并行：影响分析（整体看法）+ 事件时间轴（具体事件）
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="taco-llm") as pool:
+        f_analysis = pool.submit(llm.analyze_trump_impact, titles)
+        f_events = pool.submit(llm.extract_trump_events, news_dicts)
+        analysis = f_analysis.result()
+        events = f_events.result()
 
     report = {
         "updated_at": now_bj().isoformat(),
         "analysis": analysis,
-        "news": [n.to_dict() for n in dedup[:30]],
+        "events": events,
+        "news": news_dicts,
     }
     save_snapshot("taco", "default", report)
     return report

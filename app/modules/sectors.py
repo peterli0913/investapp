@@ -27,7 +27,8 @@ SECTOR_KEYWORDS = {
     "石油": ["原油", "OPEC", "油价", "中东 局势"],
 }
 
-MARKETS = ["A股", "港股", "美股"]
+# 5 大市场全覆盖
+MARKETS = ["A股", "港股", "美股", "日股", "韩股"]
 
 
 def _lang_country_for_market(market: str) -> tuple[str, str]:
@@ -35,6 +36,10 @@ def _lang_country_for_market(market: str) -> tuple[str, str]:
         return "en-US", "US"
     if market == "港股":
         return "zh-HK", "HK"
+    if market == "日股":
+        return "ja", "JP"
+    if market == "韩股":
+        return "ko", "KR"
     return "zh-CN", "CN"
 
 

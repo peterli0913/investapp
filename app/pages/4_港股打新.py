@@ -6,8 +6,8 @@ import streamlit as st
 from app.ui_common import bootstrap_once, hero, render_refresh_bar
 
 bootstrap_once()
-hero("🆕 港股打新",
-     "聚合港股新股招股日历，AI 给出每只新股的优势 / 劣势 / 建议。")
+hero("🆕 港股打新 · 这周有啥可以打",
+     "把最近能申购的港股新股都列出来，AI 给你算一笔账：这只值不值得打、风险点在哪、怎么操作。")
 
 payload, _ = render_refresh_bar("ipo", "港股打新")
 st.markdown("---")

@@ -69,17 +69,23 @@ def init_db() -> None:
     with _LOCK, get_conn() as conn:
         for sql in SCHEMA:
             conn.execute(sql)
-        # 初始三只自选
+        # 初始三只自选（注意：泡泡玛特，不是马）
         seed = [
             ("002613", "胜宏科技", "a"),
             ("02590", "极智嘉", "hk"),
-            ("09992", "泡泡马特", "hk"),
+            ("09992", "泡泡玛特", "hk"),
         ]
         for sym, name, market in seed:
+            # UPSERT：已存在则只更新名字，避免老 DB 残留错别字
             conn.execute(
-                "INSERT OR IGNORE INTO watchlist(symbol, name, market, added_at) VALUES(?,?,?,?)",
+                """
+                INSERT INTO watchlist(symbol, name, market, added_at) VALUES(?,?,?,?)
+                ON CONFLICT(symbol) DO UPDATE SET name=excluded.name, market=excluded.market
+                """,
                 (sym, name, market, now_bj().isoformat()),
             )
+        # 顺便修一下任何历史残留的错别字（仅修名字，不动其它）
+        conn.execute("UPDATE watchlist SET name='泡泡玛特' WHERE name='泡泡马特'")
     logger.info("DB initialized at %s", settings.db_path)
 
 
