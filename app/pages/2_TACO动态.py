@@ -10,8 +10,8 @@ import streamlit as st
 from app.ui_common import bootstrap_once, hero, render_refresh_bar
 
 bootstrap_once()
-hero("🌍 国际动态 · 大白话讲最近全球发生了啥",
-     "特朗普 / 美联储 / 中美关系 / 地缘冲突 / 央行决议 / 油价金价 / AI 监管。AI 帮你把这些事整理成时间轴，再告诉你对股市意味着啥。")
+hero("🌍 国际动态 · 关键事件梳理与市场影响",
+     "覆盖特朗普政策、美联储 / 各国央行决议、中美关系、地缘冲突、大宗商品、AI 与科技监管。AI 整理成事件时间轴，并就传导路径、影响板块给出研报式简评。")
 
 payload, _ = render_refresh_bar("taco", "国际动态")
 st.markdown("---")
@@ -25,8 +25,8 @@ analysis = payload.get("analysis") or "暂无 AI 分析。"
 st.markdown(
     f"""
     <div class="card">
-        <div class="title">📌 这两天的总体看法</div>
-        <div class="body" style="white-space: pre-wrap; line-height:1.8;">{analysis}</div>
+        <div class="title">📌 宏观综评 · 近期国际动态对市场的影响</div>
+        <div class="body" style="white-space: pre-wrap; line-height:1.85;">{analysis}</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -59,7 +59,7 @@ CAT_EMOJI = {
 }
 
 
-st.subheader(f"🕐 最近发生了哪些大事（共 {len(events)} 件，来自 {news_count} 条新闻）")
+st.subheader(f"🕐 事件时间轴（共整理 {len(events)} 条，源自 {news_count} 条新闻）")
 
 if not events:
     st.error(
@@ -99,9 +99,9 @@ else:
                 </div>
                 <div class="title">{title}</div>
                 <div class="body" style="line-height:1.8;">
-                    <b>📝 这事是怎么回事</b><br>{plain}
+                    <b>📝 事件简报</b><br>{plain}
                     <br><br>
-                    <b>📊 对市场意味着</b><br>{impact}
+                    <b>📊 市场影响</b><br>{impact}
                 </div>
             </div>
             """,

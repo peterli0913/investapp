@@ -9,7 +9,7 @@ from app.utils.config import settings
 
 bootstrap_once()
 inject_theme()
-hero("⚙️ 设置 / 我的关注股", "管你想盯哪些股，看 LLM 连得通不通。出问题第一站。")
+hero("⚙️ 设置 / 自选股管理", "管理自选股列表 · 测试 LLM 连通性 · 查看模型分级配置。遇到问题先来这里。")
 
 st.subheader("自选股管理")
 wl = get_watchlist()

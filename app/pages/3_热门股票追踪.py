@@ -9,8 +9,8 @@ import streamlit as st
 from app.ui_common import bootstrap_once, hero, pct_html, render_refresh_bar
 
 bootstrap_once()
-hero("📊 我的关注股 · 每日动态 + 操作建议",
-     "默认盯着这三只：胜宏科技 / 极智嘉 / 泡泡玛特。想换其它的去『设置 / 自选股』加。")
+hero("📊 自选股追踪 · 每日动态与操作建议",
+     "默认关注：胜宏科技 / 极智嘉 / 泡泡玛特。综合行情、均线、多因子信号与新闻情绪，给出短期趋势判断与可执行的操作建议。可在『设置 / 自选股』管理列表。")
 
 payload, _ = render_refresh_bar("tracked", "热门股票追踪")
 st.markdown("---")
@@ -136,9 +136,9 @@ for item in items:
     st.markdown(
         f"""
         <div class="card">
-            <div class="body" style="line-height:1.8;">
-                <b>💡 我的看法</b>：{outlook.get('rationale','-')}<br>
-                <b>🎯 怎么操作</b>：{outlook.get('suggestion','-')}<br>
+            <div class="body" style="line-height:1.85;">
+                <b>💡 分析逻辑</b><br>{outlook.get('rationale','-')}<br><br>
+                <b>🎯 操作建议</b><br>{outlook.get('suggestion','-')}<br>
                 <span style='color:#8B949E;font-size:12px;'>均线信号：{item.get('ma_signal','-')}</span>
             </div>
         </div>

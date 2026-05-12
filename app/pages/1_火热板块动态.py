@@ -9,8 +9,8 @@ from app.modules.sectors import MARKETS
 from app.ui_common import bootstrap_once, hero, pct_html, render_refresh_bar
 
 bootstrap_once()
-hero("🔥 最近啥在火",
-     "A股 / 港股 / 美股 / 日股 / 韩股 五大股市，再加 加密币。AI 帮你梳理每个板块在涨什么、为什么。")
+hero("🔥 板块景气度 · 全球热门赛道动态",
+     "覆盖 A 股 / 港股 / 美股 / 日股 / 韩股 五大股市与加密币市场，对 AI 应用、芯片、存储、机器人、大消费、能源 等板块做新闻聚合 + 估值/资金面解读。")
 
 payload, _ = render_refresh_bar("sectors", "火热板块动态")
 st.markdown("---")

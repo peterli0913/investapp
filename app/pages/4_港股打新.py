@@ -6,8 +6,8 @@ import streamlit as st
 from app.ui_common import bootstrap_once, hero, render_refresh_bar
 
 bootstrap_once()
-hero("🆕 港股打新 · 这周有啥可以打",
-     "把最近能申购的港股新股都列出来，AI 给你算一笔账：这只值不值得打、风险点在哪、怎么操作。")
+hero("🆕 港股打新 · 招股日历与申购建议",
+     "聚合港股新股招股日历，结合估值对标、基石质量、行业景气度、市场情绪等维度给出研报式打新建议。")
 
 payload, _ = render_refresh_bar("ipo", "港股打新")
 st.markdown("---")
@@ -46,10 +46,10 @@ for ipo in items:
                 <b>招股价</b>：{price} &nbsp;|&nbsp;
                 <b>上市日</b>：{list_date} &nbsp;|&nbsp;
                 <b>保荐人</b>：{sponsor}<br><br>
-                <b>优势</b>：<br>{pros_html}<br><br>
-                <b>劣势 / 风险</b>：<br>{cons_html}<br><br>
-                <b>建议</b>：<span class="tag">{suggestion}</span><br>
-                <span style="color:#8B949E">{rationale}</span>
+                <b>👍 看点</b><br>{pros_html}<br><br>
+                <b>⚠️ 风险点</b><br>{cons_html}<br><br>
+                <b>📋 申购建议</b>：<span class="tag">{suggestion}</span><br>
+                <span style="color:#8B949E;font-size:13px;line-height:1.8;">{rationale}</span>
             </div>
         </div>
         """,

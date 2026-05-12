@@ -82,11 +82,11 @@ def render_refresh_bar(module_key: str, label: str) -> Any:
         t0 = time.time()
         # 显示具体步骤说明，避免干瞪眼
         hint = {
-            "sectors": "并行抓 5 股市 + 加密币 共 36 个主题的新闻 + AI 总结（约 20-50 秒）",
-            "taco": "并行抓 30+ 国际关键词新闻 + AI 总分析 + 事件时间轴（约 15-40 秒）",
-            "tracked": "并行抓自选股的行情 + 新闻 + AI 建议（约 10-30 秒）",
-            "ipo": "抓港股新股日历 + 并行 AI 评估（约 10-30 秒）",
-            "recommendations": "抓 A 股+港股新股池 + 并行 AI 评级（约 20-60 秒）",
+            "sectors": "并行抓取 5 大股市 + 加密币共 36 个主题的新闻，AI 生成研报式板块综评（约 20-50 秒）",
+            "taco": "并行抓取 30+ 国际关键词新闻，AI 输出宏观综评与事件时间轴（约 15-40 秒）",
+            "tracked": "并行获取自选股行情 / 新闻 / 多因子信号 / AI 操作建议（约 10-30 秒）",
+            "ipo": "拉取港股新股招股日历，AI 输出打新优劣势与申购建议（约 10-30 秒）",
+            "recommendations": "聚合 A 股 + 港股新股池，AI 评级与基石覆盖分析（约 20-60 秒）",
         }.get(module_key, "")
         with st.spinner(f"正在刷新 {label} … {hint}"):
             new_payload = run_module(module_key)
