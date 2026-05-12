@@ -72,9 +72,25 @@ def _extract_hk_ipos_from_news() -> list[dict]:
     if not news:
         logger.warning("ipo fallback: 无招股相关新闻抓到")
         return []
+
+    # 未配置 LLM 时也提供基础信息（每条新闻包装成一个"虚拟新股"，让用户至少能看到原始新闻）
     if not llm.available:
-        logger.info("ipo fallback: LLM 未配置，仅返回新闻条目，跳过结构化提取")
-        return []
+        logger.info("ipo fallback: LLM 未配置，把抓到的新闻包装成基础卡片返回")
+        out = []
+        for n in news[:10]:
+            out.append({
+                "name": (n.title or "未知")[:50],
+                "symbol": "",
+                "industry": "—",
+                "price_range": "—",
+                "list_date": (n.published or "")[:10] or "—",
+                "sponsor": "—",
+                "fund": "—",
+                "highlight": "",
+                "_source": "news_only(no_llm)",
+                "_raw_news": {"title": n.title, "link": n.link, "source": n.source},
+            })
+        return out
 
     # 让 LLM 从新闻里提取结构化清单
     titles_block = []

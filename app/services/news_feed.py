@@ -50,10 +50,9 @@ MARKET_FEEDS: dict[str, list[str]] = {
         "https://feeds.bbci.co.uk/news/business/rss.xml",               # BBC Business
     ],
     "hk": [
-        "https://www.hkex.com.hk/-/media/HKEX-Market/Listing/Market-Misc/IPO/IPO-RSS/IPO_TC.xml",  # 港交所 IPO
         "https://hk.finance.yahoo.com/news/rssindex",                   # 雅虎财经 香港
         "http://www.aastocks.com/sc/rss/all.aspx",                      # AAStocks 简中
-        "https://www.investing.com/rss/news_75.rss",                    # Investing 港股
+        # 注：港交所 IPO RSS 和 Investing 港股 RSS 于 2025-2026 下线，已移除
     ],
     "jp": [
         "https://www.japantimes.co.jp/feed/topstories/",                # Japan Times
@@ -156,7 +155,7 @@ def fetch_many(urls: Iterable[str]) -> list[NewsItem]:
 
 
 def fetch_market_headlines(market_code: str, limit: int = 25,
-                            *, include_global: bool = True) -> list[NewsItem]:
+                            include_global: bool = True) -> list[NewsItem]:
     """聚合某个市场的常驻 RSS 源头条。
 
     market_code 形如 'cn' / 'us' / 'hk' / 'jp' / 'kr' / 'crypto' / 'macro' / 'global'。

@@ -181,38 +181,35 @@ def sector_industry_rank() -> pd.DataFrame:
 # ---------- 港股新股 / 打新 ----------
 
 def hk_ipo_calendar() -> pd.DataFrame:
-    """港股新股招股、上市日历。逐个尝试 akshare 现役接口，记录每次结果。"""
+    """港股新股招股、上市日历。
+
+    注意：经实测，akshare 当前版本 (1.13+) 已无专用港股 IPO 接口，
+    旧的 stock_hk_new_ipo_em / stock_hk_ipo_info 都已下线。
+    保留此函数仅为接口兼容，实际数据由 modules/ipo.py 的新闻 + LLM 兜底链路提供。
+    """
     try:
         import akshare as ak
     except Exception as e:
         logger.warning("hk_ipo_calendar: akshare not available: %s", e)
         return pd.DataFrame()
 
-    # akshare 不同版本接口名不同，全部试一遍
-    candidates = [
-        "stock_hk_new_ipo_em",        # 东方财富
-        "stock_hk_ipo_info",          # 新浪
-        "stock_hk_new_ipo_eastmoney", # 旧版命名
-        "stock_hk_ggt_components_em", # 港股通成分
-        "stock_hk_indicator_eniu",    # 备用
-    ]
+    # 仍尝试少数可能存在的接口（不同 akshare 版本可能恢复）
+    candidates = ["stock_hk_new_ipo_em", "stock_hk_ipo_info"]
     for fn_name in candidates:
         fn = getattr(ak, fn_name, None)
         if fn is None:
-            logger.info("hk_ipo_calendar: %s not in akshare", fn_name)
             continue
         try:
             df = fn()
             if df is not None and not df.empty:
-                logger.info("hk_ipo_calendar: got %d rows from %s, cols=%s",
-                            len(df), fn_name, list(df.columns)[:10])
+                logger.info("hk_ipo_calendar: got %d rows from %s", len(df), fn_name)
                 return df
-            logger.info("hk_ipo_calendar: %s returned empty", fn_name)
         except Exception as e:
             logger.info("hk_ipo_calendar: %s failed: %s", fn_name, e)
             continue
 
-    logger.warning("hk_ipo_calendar: all akshare endpoints exhausted, returning empty")
+    logger.info("hk_ipo_calendar: akshare 当前版本无港股 IPO 接口，"
+                "依赖 modules/ipo.py 的新闻 + LLM 兜底")
     return pd.DataFrame()
 
 
@@ -266,20 +263,39 @@ def crypto_quote(symbol: str) -> dict | None:
 
 
 def a_new_stock_calendar() -> pd.DataFrame:
-    """A 股新股申购日历。"""
+    """A 股新股申购日历。
+
+    实测 (2026-05) 可用接口：
+    - stock_xgsglb_em (东方财富) — 3000+ 行最全
+    - stock_new_ipo_cninfo (巨潮) — 500 行
+    - stock_zh_a_new (新浪) — 130 行
+    - stock_new_a_spot_em (东方财富 已上市新股) — 79 行
+    """
     try:
         import akshare as ak
-        for fn_name in ("stock_zh_a_new", "stock_xgsglb_em", "stock_zh_a_new_em"):
-            fn = getattr(ak, fn_name, None)
-            if fn is None:
-                continue
-            try:
-                df = fn()
-                if df is not None and not df.empty:
-                    return df
-            except Exception:
-                continue
-        return pd.DataFrame()
     except Exception as e:
-        logger.warning("a_new_stock_calendar failed: %s", e)
+        logger.warning("a_new_stock_calendar: akshare not available: %s", e)
         return pd.DataFrame()
+
+    candidates = [
+        "stock_xgsglb_em",        # 东方财富 - 最全
+        "stock_new_ipo_cninfo",   # 巨潮
+        "stock_zh_a_new",         # 新浪
+        "stock_new_a_spot_em",    # 东方财富已上市
+    ]
+    for fn_name in candidates:
+        fn = getattr(ak, fn_name, None)
+        if fn is None:
+            continue
+        try:
+            df = fn()
+            if df is not None and not df.empty:
+                logger.info("a_new_stock_calendar: got %d rows from %s, cols=%s",
+                            len(df), fn_name, list(df.columns)[:8])
+                return df
+        except Exception as e:
+            logger.info("a_new_stock_calendar: %s failed: %s", fn_name, e)
+            continue
+
+    logger.warning("a_new_stock_calendar: 所有接口都失败")
+    return pd.DataFrame()
