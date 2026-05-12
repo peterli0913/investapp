@@ -71,7 +71,7 @@ def headlines_sentiment_llm(titles: list[str]) -> float:
             "负数代表利空，正数代表利好。"
         )
         prompt_usr = "标题：\n" + "\n".join(f"- {t}" for t in titles[:30])
-        raw = llm.chat(prompt_sys, prompt_usr, json_mode=True, max_tokens=200, temperature=0.1)
+        raw = llm.chat(prompt_sys, prompt_usr, json_mode=True, max_tokens=200, temperature=0.1, tier="fast")
         import json
         data = json.loads(raw)
         v = float(data.get("sentiment", 0.0))

@@ -47,7 +47,8 @@ class LLMClient:
             "api_key_length": len(settings.openai_api_key),
             "api_key_preview": masked_key,
             "base_url": settings.openai_base_url,
-            "model": settings.openai_model,
+            "model_fast": settings.openai_model_fast,
+            "model_deep": settings.openai_model_deep,
             "client_initialized": self._client is not None,
             "ok": False,
             "latency_ms": None,
@@ -63,11 +64,12 @@ class LLMClient:
             info["error"] = "LLM client 未初始化（可能是 SDK 加载失败）"
             return info
 
+        # 用 fast 模型测：便宜、足够验证连通性
         import time
         t0 = time.time()
         try:
             resp = self._client.chat.completions.create(
-                model=settings.openai_model,
+                model=settings.openai_model_fast,
                 messages=[
                     {"role": "system", "content": "你是连通性测试助手。"},
                     {"role": "user", "content": "请用一个汉字回复：好"},
@@ -104,13 +106,24 @@ class LLMClient:
         return info
 
     # ---------- 通用调用 ----------
+    def _resolve_model(self, tier: str) -> str:
+        """tier: "fast" | "deep"。"""
+        if tier == "deep":
+            return settings.openai_model_deep
+        if tier == "fast":
+            return settings.openai_model_fast
+        return settings.openai_model
+
     def chat(self, system: str, user: str, *, json_mode: bool = False,
-             temperature: float = 0.4, max_tokens: int = 1200) -> str:
+             temperature: float = 0.4, max_tokens: int = 1200,
+             tier: str = "fast") -> str:
+        """tier="fast" 用低价模型（日常聚合）；tier="deep" 用深度推理模型（关键决策）。"""
         if not self._client:
             return ""
+        model = self._resolve_model(tier)
         try:
             kwargs: dict[str, Any] = dict(
-                model=settings.openai_model,
+                model=model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -121,18 +134,22 @@ class LLMClient:
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
             resp = self._client.chat.completions.create(**kwargs)
+            logger.info("LLM chat OK tier=%s model=%s", tier, model)
             return (resp.choices[0].message.content or "").strip()
         except Exception as e:
-            logger.warning("LLM chat failed: %s", e)
+            logger.warning("LLM chat failed (tier=%s model=%s): %s", tier, model, e)
             return ""
 
     # ---------- 业务封装 ----------
+    # tier 分级原则：
+    #   - fast：信息聚合 / 总结（板块新闻、Trump 日常分析），调用次数多
+    #   - deep：可执行的买卖决策（追踪股操作建议、新股 / 打新申购建议），调用次数少但要准
     def summarize_sector(self, sector: str, news_titles: list[str]) -> str:
         if not self._client or not news_titles:
             return self._fallback_sector_summary(sector, news_titles)
         sys = "你是资深的中文证券分析师，请用专业、克制的语气总结板块动态，2-4 句话，突出方向、催化剂、风险。"
         usr = f"板块：{sector}\n最近相关新闻标题：\n" + "\n".join(f"- {t}" for t in news_titles[:20])
-        out = self.chat(sys, usr, max_tokens=500)
+        out = self.chat(sys, usr, max_tokens=500, tier="fast")
         return out or self._fallback_sector_summary(sector, news_titles)
 
     def analyze_trump_impact(self, news_titles: list[str]) -> str:
@@ -140,12 +157,13 @@ class LLMClient:
             return self._fallback_trump(news_titles)
         sys = "你是宏观策略分析师。基于特朗普相关新闻，分析对美股、A股、港股的方向性影响。结构：核心事件、市场逻辑、对各市场短期影响、需关注的风险。语气克制，控制在 250 字内。"
         usr = "新闻标题：\n" + "\n".join(f"- {t}" for t in news_titles[:25])
-        out = self.chat(sys, usr, max_tokens=600)
+        # 涉及全局市场判断，用 deep 思考模式
+        out = self.chat(sys, usr, max_tokens=800, tier="deep")
         return out or self._fallback_trump(news_titles)
 
     def stock_outlook(self, name: str, recent_pct: float, news_titles: list[str],
                       ma_signal: str) -> dict:
-        """返回 dict: {trend, rationale, suggestion}。"""
+        """返回 dict: {trend, rationale, suggestion}。涉及具体买卖决策，用 deep。"""
         if not self._client:
             return self._fallback_stock(name, recent_pct, news_titles, ma_signal)
         sys = (
@@ -158,7 +176,7 @@ class LLMClient:
             f"均线信号：{ma_signal}\n"
             f"近期相关新闻：\n" + "\n".join(f"- {t}" for t in news_titles[:15])
         )
-        raw = self.chat(sys, usr, json_mode=True, max_tokens=400)
+        raw = self.chat(sys, usr, json_mode=True, max_tokens=500, tier="deep")
         try:
             data = json.loads(raw)
             if all(k in data for k in ("trend", "rationale", "suggestion")):
@@ -168,6 +186,7 @@ class LLMClient:
         return self._fallback_stock(name, recent_pct, news_titles, ma_signal)
 
     def ipo_review(self, ipo: dict) -> dict:
+        """打新 / 新股推荐：用 deep，因为是申购决策。"""
         if not self._client:
             return self._fallback_ipo(ipo)
         sys = (
@@ -176,7 +195,7 @@ class LLMClient:
             "\"suggestion\":\"建议（积极申购/谨慎申购/观望/不建议）\",\"rationale\":\"中文 1-2 句\"}。"
         )
         usr = "新股资料：\n" + json.dumps(ipo, ensure_ascii=False, indent=2)
-        raw = self.chat(sys, usr, json_mode=True, max_tokens=500)
+        raw = self.chat(sys, usr, json_mode=True, max_tokens=600, tier="deep")
         try:
             data = json.loads(raw)
             data.setdefault("pros", [])

@@ -43,6 +43,27 @@ streamlit run streamlit_app.py
 
 > 旧名 `deepseek-chat` 和 `deepseek-reasoner` 仍然兼容（实际指向 v4-flash 的非思考 / 思考模式），但将被官方弃用。建议直接用新名字。
 
+#### 自动模型分级（推荐方案）
+
+app 会**按调用场景自动切换模型**，无需手动选：
+
+| 场景 | 默认 tier | 默认模型 |
+|---|---|---|
+| 板块新闻总结、情绪打分 | `fast` | `deepseek-v4-flash` |
+| TACO 全球影响分析 | `deep` | `deepseek-v4-pro` |
+| 追踪股操作建议（买卖判断） | `deep` | `deepseek-v4-pro` |
+| 港股打新申购建议 | `deep` | `deepseek-v4-pro` |
+| 新股推荐评级 | `deep` | `deepseek-v4-pro` |
+
+在 `.env` 中独立配置：
+
+```bash
+OPENAI_MODEL_FAST=deepseek-v4-flash
+OPENAI_MODEL_DEEP=deepseek-v4-pro
+```
+
+想全用便宜模型省钱 → 两个都设 `deepseek-v4-flash`；想全用深度模型 → 两个都设 `deepseek-v4-pro`。
+
 #### 排查 `Authentication Fails (governor)` 错误
 
 这是 DeepSeek 的特定错误，含义是**请求里没带 `Authorization` header**（不是 key 错）。最常见的原因：

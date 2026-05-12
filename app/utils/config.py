@@ -15,7 +15,16 @@ load_dotenv(ROOT / ".env", override=False)
 class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "").strip()
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com").strip()
+    # 兼容旧字段：OPENAI_MODEL 仍可用，但推荐分级配置 fast/deep
     openai_model: str = os.getenv("OPENAI_MODEL", "deepseek-v4-flash").strip()
+    openai_model_fast: str = os.getenv(
+        "OPENAI_MODEL_FAST",
+        os.getenv("OPENAI_MODEL", "deepseek-v4-flash"),
+    ).strip()
+    openai_model_deep: str = os.getenv(
+        "OPENAI_MODEL_DEEP",
+        os.getenv("OPENAI_MODEL", "deepseek-v4-pro"),
+    ).strip()
 
     daily_update_hhmm: str = os.getenv("DAILY_UPDATE_HHMM", "06:30").strip()
     timezone: str = os.getenv("TIMEZONE", "Asia/Shanghai").strip()

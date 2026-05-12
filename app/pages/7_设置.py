@@ -45,15 +45,20 @@ st.markdown("---")
 st.subheader("运行配置")
 st.code(
     f"""
-LLM 已启用      : {settings.llm_enabled}
-OpenAI 模型     : {settings.openai_model}
-OpenAI BaseURL  : {settings.openai_base_url}
-每日刷新时间    : {settings.daily_update_hhmm} ({settings.timezone})
-SQLite 路径     : {settings.db_path}
+LLM 已启用       : {settings.llm_enabled}
+LLM BaseURL      : {settings.openai_base_url}
+Fast 模型（日常）: {settings.openai_model_fast}
+Deep 模型（决策）: {settings.openai_model_deep}
+每日刷新时间     : {settings.daily_update_hhmm} ({settings.timezone})
+SQLite 路径      : {settings.db_path}
 """.strip(),
     language="text",
 )
-st.caption("如需修改：编辑根目录下的 `.env` 文件，然后重启应用。")
+st.caption(
+    "如需修改：编辑根目录下的 `.env` 文件，然后重启应用。"
+    " 业务调用分级：板块新闻总结 / 情绪打分 → **Fast**；"
+    "追踪股操作建议 / 港股打新 / 新股推荐 / TACO 影响 → **Deep**。"
+)
 
 st.markdown("---")
 st.subheader("LLM API 连通性自检")
