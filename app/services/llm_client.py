@@ -33,6 +33,76 @@ class LLMClient:
     def available(self) -> bool:
         return self._client is not None
 
+    # ---------- 自检 ----------
+    def ping(self) -> dict:
+        """主动发一次最小请求，把 key/base_url/model/响应/错误打回来。
+
+        用于排查类似 DeepSeek `Authentication Fails (governor)` 这种
+        「key 没被带上」的错误：通过完整诊断信息确认请求到底是怎么发的。
+        """
+        masked_key = (settings.openai_api_key[:6] + "..." + settings.openai_api_key[-4:]
+                      if len(settings.openai_api_key) >= 12 else "(空)")
+        info: dict = {
+            "api_key_present": bool(settings.openai_api_key),
+            "api_key_length": len(settings.openai_api_key),
+            "api_key_preview": masked_key,
+            "base_url": settings.openai_base_url,
+            "model": settings.openai_model,
+            "client_initialized": self._client is not None,
+            "ok": False,
+            "latency_ms": None,
+            "reply": None,
+            "error": None,
+            "hint": None,
+        }
+        if not settings.openai_api_key:
+            info["error"] = "OPENAI_API_KEY 未配置"
+            info["hint"] = "在 .env 中填 OPENAI_API_KEY=sk-xxx 后重启 streamlit"
+            return info
+        if not self._client:
+            info["error"] = "LLM client 未初始化（可能是 SDK 加载失败）"
+            return info
+
+        import time
+        t0 = time.time()
+        try:
+            resp = self._client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": "你是连通性测试助手。"},
+                    {"role": "user", "content": "请用一个汉字回复：好"},
+                ],
+                max_tokens=10,
+                temperature=0.0,
+            )
+            info["ok"] = True
+            info["latency_ms"] = int((time.time() - t0) * 1000)
+            info["reply"] = (resp.choices[0].message.content or "").strip()
+        except Exception as e:
+            info["latency_ms"] = int((time.time() - t0) * 1000)
+            err_str = str(e)
+            info["error"] = err_str
+            # 智能给提示
+            low = err_str.lower()
+            if "governor" in low or "authorization" in low:
+                info["hint"] = (
+                    "DeepSeek 的 `Authentication Fails (governor)` 意思是请求里没带 Authorization "
+                    "header。请确认：(1) .env 中的 OPENAI_API_KEY 不为空且无多余空格/引号；"
+                    "(2) 重启了 streamlit；(3) base_url 用 https://api.deepseek.com（不带 /v1 也行）。"
+                )
+            elif "401" in err_str or "invalid" in low and "key" in low:
+                info["hint"] = "API key 无效或已被吊销。去 https://platform.deepseek.com/api_keys 重新创建。"
+            elif "insufficient" in low or "balance" in low or "billing" in low:
+                info["hint"] = "账户余额不足。DeepSeek 需要先到平台充值（最低 1 元/$1）。"
+                info["hint"] += " 充值入口：https://platform.deepseek.com/top_up"
+            elif "model" in low and ("not" in low or "unknown" in low):
+                info["hint"] = "模型名不存在。DeepSeek 现役模型：deepseek-v4-flash / deepseek-v4-pro"
+            elif "timeout" in low or "connection" in low:
+                info["hint"] = "网络连不上。如果你在国外，DeepSeek 不限地区；如果在受限网络下，建议配代理或换 OpenAI。"
+            else:
+                info["hint"] = "把 error 字段完整发我，我帮你看具体是哪一步。"
+        return info
+
     # ---------- 通用调用 ----------
     def chat(self, system: str, user: str, *, json_mode: bool = False,
              temperature: float = 0.4, max_tokens: int = 1200) -> str:

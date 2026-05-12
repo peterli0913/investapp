@@ -26,13 +26,32 @@ streamlit run streamlit_app.py
 
 ### 关于 LLM Key
 
-支持任何兼容 OpenAI API 协议的服务：
+支持任何兼容 OpenAI API 协议的服务。**默认使用 DeepSeek**：
 
-| 服务 | OPENAI_BASE_URL | 备注 |
+| 服务 | OPENAI_BASE_URL | 推荐模型 | 备注 |
+|---|---|---|---|
+| **DeepSeek** ⭐ | `https://api.deepseek.com` | `deepseek-v4-flash` / `deepseek-v4-pro` | 国内速度快、价格低 |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | 全球通用 |
+| Moonshot Kimi | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` | 国内可用 |
+
+#### DeepSeek 模型选择（2026 起 V3 系列已合并到 V4）
+
+| 模型 | 适用 | 价格（1M tokens, 输入/输出） |
 |---|---|---|
-| OpenAI | `https://api.openai.com/v1` | 默认 |
-| DeepSeek | `https://api.deepseek.com/v1` | 国内可用、性价比高 |
-| Moonshot Kimi | `https://api.moonshot.cn/v1` | 国内可用 |
+| `deepseek-v4-flash` | 日常刷新、新闻总结、情绪打分 | $0.14 / $0.28 |
+| `deepseek-v4-pro` | 重要决策、深度推理（思考模式） | $0.435 / $0.87（当前 75% 折扣） |
+
+> 旧名 `deepseek-chat` 和 `deepseek-reasoner` 仍然兼容（实际指向 v4-flash 的非思考 / 思考模式），但将被官方弃用。建议直接用新名字。
+
+#### 排查 `Authentication Fails (governor)` 错误
+
+这是 DeepSeek 的特定错误，含义是**请求里没带 `Authorization` header**（不是 key 错）。最常见的原因：
+
+1. `.env` 中 `OPENAI_API_KEY` 是空字符串或多了空格 / 引号
+2. 没有重启 streamlit（应用启动时只读一次 `.env`）
+3. base URL 写成了不存在的形式
+
+**最快定位方式**：进入应用的 *设置 / 自选股* 页面，点 **🔌 测试 LLM 连接**，会真实发一次请求并把 base_url / 模型 / 原始错误响应完整打出来。
 
 没有 key 也可以跑，所有 AI 模块会回退到启发式实现（仅做信息聚合，不做主观判断）。
 

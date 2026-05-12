@@ -14,8 +14,8 @@ load_dotenv(ROOT / ".env", override=False)
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "").strip()
-    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com").strip()
+    openai_model: str = os.getenv("OPENAI_MODEL", "deepseek-v4-flash").strip()
 
     daily_update_hhmm: str = os.getenv("DAILY_UPDATE_HHMM", "06:30").strip()
     timezone: str = os.getenv("TIMEZONE", "Asia/Shanghai").strip()

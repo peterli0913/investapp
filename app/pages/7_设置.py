@@ -54,3 +54,38 @@ SQLite 路径     : {settings.db_path}
     language="text",
 )
 st.caption("如需修改：编辑根目录下的 `.env` 文件，然后重启应用。")
+
+st.markdown("---")
+st.subheader("LLM API 连通性自检")
+st.caption(
+    "点击下方按钮会真实发一次最小请求。即使返回错误也会把 base_url / 模型 / "
+    "原始 error 完整打出来，方便定位 DeepSeek 的 `Authentication Fails (governor)` 这类问题。"
+)
+
+if st.button("🔌 测试 LLM 连接", type="primary"):
+    from app.services.llm_client import llm
+    with st.spinner("发送测试请求中…"):
+        info = llm.ping()
+
+    if info["ok"]:
+        st.success(f"✅ 连接成功！模型回复：「{info['reply']}」 · 耗时 {info['latency_ms']} ms")
+    else:
+        st.error(f"❌ 连接失败：{info.get('error') or '未知'}")
+        if info.get("hint"):
+            st.warning(f"💡 排查建议：{info['hint']}")
+
+    # 一定要展示完整诊断信息
+    diag = {k: v for k, v in info.items() if k != "hint"}
+    st.json(diag)
+
+st.markdown(
+    """
+    #### DeepSeek 常见错误对照
+    | 错误 | 真实原因 | 解决 |
+    |---|---|---|
+    | `Authentication Fails (governor)` | 请求里没带 Authorization header | 检查 `.env` 中 `OPENAI_API_KEY` 是否为空 / 有多余空格引号 / 重启 streamlit |
+    | `401 Authentication Fails` | key 无效或被吊销 | 去 <https://platform.deepseek.com/api_keys> 重新创建 |
+    | `402 Insufficient Balance` | 账户余额不足 | 去 <https://platform.deepseek.com/top_up> 充值（最低 1 元） |
+    | `Model not exist` | 模型名错 | 用 `deepseek-v4-flash` 或 `deepseek-v4-pro` |
+    """
+)
