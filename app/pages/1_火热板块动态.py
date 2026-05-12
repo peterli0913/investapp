@@ -5,12 +5,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.modules.sectors import MARKETS, SECTOR_KEYWORDS
+from app.modules.sectors import MARKETS
 from app.ui_common import bootstrap_once, hero, pct_html, render_refresh_bar
 
 bootstrap_once()
-hero("🔥 最近啥板块在火",
-     "看看 A股、港股、美股、日股、韩股 五大市场，AI/芯片/存储/机器人/大消费/石油 这些热门板块最近都在干啥。")
+hero("🔥 最近啥在火",
+     "A股 / 港股 / 美股 / 日股 / 韩股 五大股市，再加 加密币。AI 帮你梳理每个板块在涨什么、为什么。")
 
 payload, _ = render_refresh_bar("sectors", "火热板块动态")
 st.markdown("---")
@@ -54,41 +54,56 @@ for tab, market in zip(market_tab, MARKETS):
             st.info(f"{market} 暂无数据。")
             continue
 
-        # 顶部：板块涨跌幅柱状图（A 股有；其它市场暂时没有就跳过）
+        # 顶部：板块涨跌幅柱状图（A 股、加密币 都能拿到数据）
+        chart_title = "📊 今日板块涨跌幅一览" if market != "加密币" else "📊 24 小时涨跌幅一览"
         chart = _pct_bar(market_data)
         if chart:
-            st.markdown("##### 📊 今日板块涨跌幅一览")
+            st.markdown(f"##### {chart_title}")
             st.plotly_chart(chart, use_container_width=True)
             st.markdown("---")
 
-        # 下面：每个板块的卡片
-        for sector in SECTOR_KEYWORDS.keys():
-            entry = market_data.get(sector) or {}
+        # 下面：每个板块/主题的卡片（动态读 payload，不依赖硬编码列表）
+        for sector, entry in market_data.items():
             pct = entry.get("pct")
             news = entry.get("news") or []
             summary = entry.get("summary") or "暂无总结。"
-            tag = '<span class="tag">板块涨跌幅</span>' + pct_html(pct) if pct is not None else ""
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div class="card">
-                        <div class="title">{sector} &nbsp;&nbsp; {tag}</div>
-                        <div class="body" style="line-height:1.8;">{summary}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                with st.expander(f"查看 {sector} 的来源新闻（{len(news)}）"):
-                    if not news:
-                        st.write("暂无相关新闻。")
-                    else:
-                        for n in news:
-                            title = n.get("title") or "(无标题)"
-                            link = n.get("link") or "#"
-                            src = n.get("source") or ""
-                            pub = n.get("published") or ""
-                            st.markdown(
-                                f"- [{title}]({link})  \n"
-                                f"  <span style='color:#8B949E;font-size:12px'>{src} · {pub}</span>",
-                                unsafe_allow_html=True,
-                            )
+            quotes = entry.get("quotes") or []  # 加密币才有
+
+            # 顶部标签：板块涨跌幅 / 加密币也用同样字段
+            pct_label = "24 小时涨跌幅" if market == "加密币" else "板块涨跌幅"
+            tag = f'<span class="tag">{pct_label}</span>' + pct_html(pct) if pct is not None else ""
+
+            st.markdown(
+                f"""
+                <div class="card">
+                    <div class="title">{sector} &nbsp;&nbsp; {tag}</div>
+                    <div class="body" style="line-height:1.8;">{summary}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # 加密币：把具体币种行情列成 metrics
+            if quotes:
+                cols = st.columns(min(len(quotes), 4))
+                for i, q in enumerate(quotes):
+                    cols[i % len(cols)].metric(
+                        q.get("ticker", "—"),
+                        f"${q.get('price', 0):,.2f}",
+                        f"{q.get('pct_24h', 0):+.2f}%",
+                    )
+
+            with st.expander(f"查看 {sector} 的来源新闻（{len(news)}）"):
+                if not news:
+                    st.write("暂无相关新闻。")
+                else:
+                    for n in news:
+                        title = n.get("title") or "(无标题)"
+                        link = n.get("link") or "#"
+                        src = n.get("source") or ""
+                        pub = n.get("published") or ""
+                        st.markdown(
+                            f"- [{title}]({link})  \n"
+                            f"  <span style='color:#8B949E;font-size:12px'>{src} · {pub}</span>",
+                            unsafe_allow_html=True,
+                        )

@@ -51,11 +51,60 @@ def _news_lang(market: str) -> tuple[str, str]:
     return "zh-CN", "CN"
 
 
+def _fmt_volume(v: float) -> str:
+    """成交量 / 成交额格式化，便于普通人阅读。"""
+    if v is None or v != v:
+        return "—"
+    v = float(v)
+    if abs(v) >= 1e8:
+        return f"{v/1e8:.2f} 亿"
+    if abs(v) >= 1e4:
+        return f"{v/1e4:.2f} 万"
+    return f"{v:.0f}"
+
+
+def _today_metrics(df) -> dict:
+    """从历史 df 抽出『今日』和『昨日』的关键指标。
+
+    A 股 / 港股的 df 一般包含 amount（成交额）；美股的 yfinance 没有 amount。
+    """
+    if df is None or df.empty:
+        return {}
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) >= 2 else None
+    last_close = float(last.get("close", 0)) if "close" in last else 0.0
+    last_open = float(last.get("open", last_close)) if "open" in last else last_close
+    last_high = float(last.get("high", last_close)) if "high" in last else last_close
+    last_low = float(last.get("low", last_close)) if "low" in last else last_close
+    last_volume = float(last.get("volume", 0)) if "volume" in last else 0.0
+    last_amount = float(last.get("amount", 0)) if "amount" in last and last["amount"] == last["amount"] else None
+
+    today_pct = None
+    if prev is not None and "close" in prev:
+        prev_close = float(prev.get("close", 0))
+        if prev_close:
+            today_pct = (last_close / prev_close - 1.0) * 100.0
+
+    return {
+        "last_date": last["date"].strftime("%Y-%m-%d") if hasattr(last["date"], "strftime") else str(last["date"]),
+        "last_close": last_close,
+        "last_open": last_open,
+        "last_high": last_high,
+        "last_low": last_low,
+        "today_pct": today_pct,
+        "volume": last_volume,
+        "volume_str": _fmt_volume(last_volume),
+        "amount": last_amount,
+        "amount_str": _fmt_volume(last_amount) if last_amount is not None else "—",
+    }
+
+
 def _process_one_stock(w: dict) -> dict:
     sym, name, market = w["symbol"], w["name"], w["market"]
     df = stock_hist(sym, market)
     pct = _recent_pct(df)
     signal = _ma_signal(df)
+    metrics = _today_metrics(df)
     lang, country = _news_lang(market)
     news = fetch_keywords([name, f"{name} 股价"], lang=lang, country=country, per=5)
     titles = [n.title for n in news if n.title]
@@ -89,6 +138,7 @@ def _process_one_stock(w: dict) -> dict:
         "sentiment": sentiment,
         "ensemble_signal": ens_text,
         "outlook": outlook,
+        "metrics": metrics,
         "news": [n.to_dict() for n in news[:10]],
         "kline": kline,
     }

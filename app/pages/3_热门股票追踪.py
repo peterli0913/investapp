@@ -80,6 +80,11 @@ def _kline_chart(kline: list[dict]) -> go.Figure:
     return fig
 
 
+def _market_currency(market: str) -> str:
+    m = (market or "").lower()
+    return {"a": "¥", "hk": "HK$", "us": "US$"}.get(m, "")
+
+
 for item in items:
     pct = item.get("recent_pct_20d")
     outlook = item.get("outlook") or {}
@@ -89,25 +94,58 @@ for item in items:
     ens_klass = "up" if ens == "看多" else ("down" if ens == "看空" else "neutral")
     senti = item.get("sentiment", 0.0) or 0.0
     senti_klass = "up" if senti > 0.15 else ("down" if senti < -0.15 else "neutral")
+    metrics = item.get("metrics") or {}
+    currency = _market_currency(item.get("market", ""))
+
+    # 顶部：股票名 + 标签
     tag_html = (
         f'<span class="tag">{item.get("market","").upper()}</span>'
         f'<span class="tag">近 20 日 {pct_html(pct)}</span>'
         f'<span class="tag {klass}">AI 趋势：{trend}</span>'
         f'<span class="tag {ens_klass}">多因子：{ens}</span>'
         f'<span class="tag {senti_klass}">新闻情绪：{senti:+.2f}</span>'
-        f'<span class="tag">均线：{item.get("ma_signal","-")}</span>'
     )
     st.markdown(
         f"""
         <div class="card">
             <div class="title">{item['name']} <span style='color:#8B949E;font-size:13px;'>({item['symbol']})</span></div>
             <div style='margin-bottom:8px'>{tag_html}</div>
-            <div class="body"><b>逻辑：</b>{outlook.get('rationale','-')}<br>
-                <b>建议：</b>{outlook.get('suggestion','-')}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # 今日股价 / 涨跌 / 成交量 4 个 metric
+    if metrics:
+        last_close = metrics.get("last_close")
+        today_pct = metrics.get("today_pct")
+        m_cols = st.columns(4)
+        m_cols[0].metric(
+            "最新价",
+            f"{currency}{last_close:.2f}" if last_close else "—",
+            f"{today_pct:+.2f}%" if today_pct is not None else None,
+        )
+        m_cols[1].metric(
+            f"日内高 / 低 ({metrics.get('last_date','-')})",
+            f"{metrics.get('last_high', 0):.2f} / {metrics.get('last_low', 0):.2f}" if last_close else "—",
+        )
+        m_cols[2].metric("当日成交量", metrics.get("volume_str", "—"))
+        m_cols[3].metric("当日成交额", metrics.get("amount_str", "—"))
+
+    # AI 建议
+    st.markdown(
+        f"""
+        <div class="card">
+            <div class="body" style="line-height:1.8;">
+                <b>💡 我的看法</b>：{outlook.get('rationale','-')}<br>
+                <b>🎯 怎么操作</b>：{outlook.get('suggestion','-')}<br>
+                <span style='color:#8B949E;font-size:12px;'>均线信号：{item.get('ma_signal','-')}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.plotly_chart(_kline_chart(item.get("kline") or []), use_container_width=True)
     with st.expander(f"查看 {item['name']} 来源新闻（{len(item.get('news') or [])}）"):
         for n in item.get("news") or []:
