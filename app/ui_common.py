@@ -15,12 +15,27 @@ THEME_PATH = Path(__file__).parent / "assets" / "theme.css"
 
 
 def bootstrap_once() -> None:
-    """每次页面渲染都会跑，但内部做了幂等：DB 只建一次，调度器只起一次。"""
+    """每次页面渲染都会跑，但内部做了幂等：DB 只建一次，调度器只起一次。
+
+    在 Streamlit Cloud 上即使调度器启动失败也不能阻塞 UI，所以每个子系统单独 try。
+    """
     if "_booted" in st.session_state:
         return
-    init_db()
-    start_scheduler()
+    boot_errors: list[str] = []
+    try:
+        init_db()
+    except Exception as e:
+        boot_errors.append(f"init_db: {e}")
+    try:
+        start_scheduler()
+    except Exception as e:
+        boot_errors.append(f"start_scheduler: {e}")
+
     st.session_state._booted = True
+    st.session_state._boot_errors = boot_errors
+    if boot_errors:
+        # 不抛错，但在 UI 上提示一次
+        st.warning("启动时部分子系统初始化失败（不影响其他功能）：" + " | ".join(boot_errors))
 
 
 def inject_theme() -> None:

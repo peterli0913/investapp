@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,29 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import streamlit as st
+
+# ===== 关键：把 Streamlit Cloud 的 secrets 同步到 os.environ =====
+# 必须在 import app.* 之前完成，因为 app.utils.config 是模块加载时读取环境变量的
+def _bridge_secrets_to_env() -> None:
+    try:
+        secrets_obj = getattr(st, "secrets", None)
+        if secrets_obj is None:
+            return
+        # st.secrets 行为类似 dict；保险起见用 try/except 包裹每一项
+        for key in list(secrets_obj.keys()):
+            try:
+                value = secrets_obj[key]
+                # 只处理标量字符串；嵌套结构跳过
+                if isinstance(value, (str, int, float)) and key not in os.environ:
+                    os.environ[key] = str(value)
+            except Exception:
+                continue
+    except Exception:
+        # 本地无 secrets.toml 时 st.secrets 抛 StreamlitSecretNotFoundError，正常忽略
+        pass
+
+
+_bridge_secrets_to_env()
 
 st.set_page_config(
     page_title="炒股助手 · 信息收集与辅助决策",

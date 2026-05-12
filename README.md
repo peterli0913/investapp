@@ -81,16 +81,31 @@ OPENAI_MODEL_DEEP=deepseek-v4-pro
 ## 2. 部署到 Streamlit Cloud
 
 1. 把仓库 push 到 GitHub。
-2. 登录 <https://share.streamlit.io>，新建 app，**Main file path** 填 `streamlit_app.py`。
-3. 在 **Settings → Secrets** 里以 `KEY=VALUE` 形式填入：
+2. 登录 <https://share.streamlit.io>，新建 app，**Main file path** 必须填 `streamlit_app.py`。
+3. 在 **App Settings → Secrets** 里粘贴下面这段（注意：Streamlit Cloud Secrets 是 **TOML 格式**，字符串必须用**双引号**包裹，不能用 `KEY=VALUE` 的 .env 写法）：
+
+    ```toml
+    OPENAI_API_KEY = "sk-你的DeepSeekKey"
+    OPENAI_BASE_URL = "https://api.deepseek.com"
+    OPENAI_MODEL_FAST = "deepseek-v4-flash"
+    OPENAI_MODEL_DEEP = "deepseek-v4-pro"
+    DAILY_UPDATE_HHMM = "06:30"
+    TIMEZONE = "Asia/Shanghai"
     ```
-    OPENAI_API_KEY=sk-xxx
-    OPENAI_BASE_URL=https://api.deepseek.com/v1
-    OPENAI_MODEL=deepseek-chat
-    DAILY_UPDATE_HHMM=06:30
-    TIMEZONE=Asia/Shanghai
-    ```
-4. Deploy 完成后即可使用。Streamlit Cloud 在长时间无访问时会休眠，可借助 [UptimeRobot](https://uptimerobot.com) 等服务每 10 分钟 ping 一次，保持调度器存活。
+
+4. 点 **Save**，应用自动重启。Streamlit Cloud 在长时间无访问时会休眠，可用 [UptimeRobot](https://uptimerobot.com) 每 10 分钟 ping 一次保持调度器存活。
+
+### Streamlit Cloud 部署排错
+
+| 现象 | 真实原因 | 修复 |
+|---|---|---|
+| 部署后页面打开是空白 / 一直转圈 | 应用启动报错。打开 **Manage app → Logs** 看 Python traceback | 把 traceback 完整发我 |
+| 设置页 ping 测试报 `OPENAI_API_KEY 未配置` | Secrets 格式不对（**最常见**：用了 `KEY=VALUE` 而不是 `KEY = "VALUE"`） | Secrets 必须是 TOML 格式，字符串两边加双引号 |
+| `Authentication Fails (governor)` | Authorization header 没被带上 | 同上：检查 Secrets 引号；改完点 Save 等自动重启 |
+| `ModuleNotFoundError: akshare / yfinance` | requirements.txt 没被识别 | 确认 `requirements.txt` 在仓库根目录（不要放在子目录） |
+| `unhashable type: 'list'` 之类奇怪错误 | Python 版本不对 | App Settings → Python version 选 **3.11** 或 **3.12** |
+
+修改 Secrets 后**不需要 Reboot**，Streamlit Cloud 会自动 reload。如果界面没自动刷新，强制刷新浏览器即可。
 
 ---
 
