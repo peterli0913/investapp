@@ -1,0 +1,104 @@
+/* 专业金融审美：深色 + 金色高亮 + 涨跌色 */
+
+:root {
+    --bg: #0E1117;
+    --bg-soft: #161B22;
+    --border: #2A2F3A;
+    --text: #E6EDF3;
+    --muted: #8B949E;
+    --gold: #E5B864;
+    --up: #E74C3C;   /* A 股习惯：红涨 */
+    --down: #27AE60; /* 绿跌 */
+    --neutral: #6E7681;
+}
+
+html, body, [data-testid="stAppViewContainer"] {
+    background-color: var(--bg);
+    color: var(--text);
+}
+
+/* 顶部 hero */
+.hero {
+    padding: 18px 22px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: linear-gradient(135deg, #161B22 0%, #0E1117 100%);
+    margin-bottom: 18px;
+}
+.hero h1 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: 1px;
+    color: var(--gold);
+}
+.hero .sub {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+/* 信息卡片 */
+.card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background-color: var(--bg-soft);
+    margin-bottom: 12px;
+}
+.card .title {
+    font-size: 15px;
+    color: var(--gold);
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.card .meta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+.card .body {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* 涨跌色 */
+.up   { color: var(--up); font-weight: 600; }
+.down { color: var(--down); font-weight: 600; }
+.neutral { color: var(--neutral); }
+
+/* 标签 */
+.tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    background-color: rgba(229,184,100,0.12);
+    color: var(--gold);
+    margin-right: 6px;
+}
+.tag.up { background-color: rgba(231,76,60,0.15); color: var(--up); }
+.tag.down { background-color: rgba(39,174,96,0.15); color: var(--down); }
+
+/* 新闻列表 */
+.news-list a {
+    color: var(--text);
+    text-decoration: none;
+}
+.news-list a:hover { color: var(--gold); }
+.news-list li {
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+/* 按钮 */
+.stButton>button {
+    background: linear-gradient(135deg, #2A2F3A, #161B22);
+    color: var(--gold);
+    border: 1px solid var(--gold);
+    border-radius: 6px;
+}
+.stButton>button:hover {
+    background: var(--gold);
+    color: #0E1117;
+}
