@@ -222,6 +222,34 @@
 
   footer{text-align:center; color:var(--muted); font-size:12px; padding:0 16px 30px;}
 
+  /* ===== 打印 / 导出 PDF ===== */
+  #printArea{display:none;}
+  .print-page{}
+  .print-head{
+    text-align:center; margin:0 0 12px;
+  }
+  .print-head .pnames{
+    font-family:"STKaiti","KaiTi","Songti SC",serif; font-size:22px; font-weight:700; color:var(--ink);
+  }
+  .print-head .pnames .heart{color:var(--rose);}
+  .print-head .psub{color:var(--muted); font-size:12px; letter-spacing:3px; margin-top:2px;}
+  .print-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:14px 20px; align-items:start;
+  }
+  @media print{
+    /* 隐藏所有交互 / 屏幕元素 */
+    header.top, .toolbar, .hint, .banner, .hall, footer, .overlay, .toast{ display:none !important; }
+    body{ background:#fff !important; }
+    #printArea{ display:block !important; }
+    .print-page{ page-break-after:always; break-after:page; }
+    .print-page:last-child{ page-break-after:auto; break-after:auto; }
+    /* 卡片不跨页拆分 */
+    .print-grid .card{ break-inside:avoid; page-break-inside:avoid; box-shadow:none; margin:0; }
+    /* 保留彩色背景（无需勾选“背景图形”）*/
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+    @page{ size:A4 portrait; margin:10mm; }
+  }
+
   @media (max-width:820px){
     .hall{grid-template-columns:1fr; }
     .stage{order:-1; position:relative; top:0;}
@@ -245,6 +273,7 @@
     <div class="stat" id="saveState">已保存</div>
     <button class="btn save" id="saveBtn">💾 储存</button>
     <button class="btn ghost" id="versionBtn">🗂 版本备份</button>
+    <button class="btn ghost" id="printBtn">🖨 打印 / 导出PDF</button>
     <button class="btn ghost" id="resetBtn">↺ 恢复默认</button>
   </div>
   <div class="hint" id="hint">点座位改人、每桌可「改名 / 换位」· 编辑只在本地预览，<b>点「💾 储存」才会保存并覆盖线上</b></div>
@@ -313,6 +342,23 @@
       </div>
     </div>
   </div>
+
+  <!-- 修改备注 -->
+  <div class="overlay" id="noteOverlay">
+    <div class="modal">
+      <h3>修改备注</h3>
+      <div class="msub" id="noteSub"></div>
+      <input id="noteInput" placeholder="请输入备注（留空表示删除备注）" />
+      <div class="modal-btns">
+        <button class="btn warn" id="noteClear">清空备注</button>
+        <button class="btn warn" id="noteCancel">取消</button>
+        <button class="btn primary" id="noteSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 打印 / 导出 PDF 专用容器（仅打印时显示）-->
+  <div id="printArea"></div>
 
   <div class="toast" id="toast"></div>
 
@@ -517,7 +563,7 @@ function render(){
   document.getElementById("statSeats").textContent = seats;
 }
 
-function buildCard(t, idx){
+function buildCard(t, idx, forPrint){
   const occ = t.seats.filter(s=>s.trim()).length;
   const total = t.seats.length;
   const over = total > BASE;
@@ -540,17 +586,22 @@ function buildCard(t, idx){
     card.appendChild(note);
   }
 
-  // 改名 / 换位
-  const tools = document.createElement("div");
-  tools.className = "card-tools";
-  const bName = document.createElement("button");
-  bName.className = "mini"; bName.textContent = "✎ 改名";
-  bName.onclick = ()=>openName(idx);
-  const bMove = document.createElement("button");
-  bMove.className = "mini"; bMove.textContent = "⇄ 换位";
-  bMove.onclick = ()=>openMove(idx);
-  tools.appendChild(bName); tools.appendChild(bMove);
-  card.appendChild(tools);
+  // 改名 / 换位 / 备注（打印时不显示）
+  if(!forPrint){
+    const tools = document.createElement("div");
+    tools.className = "card-tools";
+    const bName = document.createElement("button");
+    bName.className = "mini"; bName.textContent = "✎ 改名";
+    bName.onclick = ()=>openName(idx);
+    const bMove = document.createElement("button");
+    bMove.className = "mini"; bMove.textContent = "⇄ 换位";
+    bMove.onclick = ()=>openMove(idx);
+    const bNote = document.createElement("button");
+    bNote.className = "mini"; bNote.textContent = "✎ 备注";
+    bNote.onclick = ()=>openNote(idx);
+    tools.appendChild(bName); tools.appendChild(bMove); tools.appendChild(bNote);
+    card.appendChild(tools);
+  }
 
   // 圆桌 + 10 个基础座位
   const area = document.createElement("div");
@@ -567,7 +618,7 @@ function buildCard(t, idx){
     const cx = SIZE/2, cy = SIZE/2;
     const x = cx + R*Math.cos(ang) - SW/2;
     const y = cy + R*Math.sin(ang) - SH/2;
-    const seat = makeSeat(t, idx, i);
+    const seat = makeSeat(t, idx, i, forPrint);
     seat.style.left = x+"px"; seat.style.top = y+"px";
     area.appendChild(seat);
   }
@@ -584,47 +635,49 @@ function buildCard(t, idx){
     const list = document.createElement("div");
     list.className = "added-list";
     for(let i=BASE;i<total;i++){
-      list.appendChild(makeAddedSeat(t, idx, i));
+      list.appendChild(makeAddedSeat(t, idx, i, forPrint));
     }
     wrap.appendChild(list);
     card.appendChild(wrap);
   }
 
-  // 操作按钮
-  const actions = document.createElement("div");
-  actions.className = "actions";
-  const addBtn = document.createElement("button");
-  addBtn.className = "btn add";
-  addBtn.textContent = "＋ 加座位";
-  addBtn.onclick = ()=>{ t.seats.push(""); render(); markDirty(); };
-  const delBtn = document.createElement("button");
-  delBtn.className = "btn del";
-  delBtn.textContent = "－ 删除加座";
-  delBtn.onclick = ()=>removeAddedSeat(idx);
-  actions.appendChild(addBtn);
-  actions.appendChild(delBtn);
-  card.appendChild(actions);
+  // 操作按钮（打印时不显示）
+  if(!forPrint){
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn add";
+    addBtn.textContent = "＋ 加座位";
+    addBtn.onclick = ()=>{ t.seats.push(""); render(); markDirty(); };
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn del";
+    delBtn.textContent = "－ 删除加座";
+    delBtn.onclick = ()=>removeAddedSeat(idx);
+    actions.appendChild(addBtn);
+    actions.appendChild(delBtn);
+    card.appendChild(actions);
+  }
 
   return card;
 }
 
-function makeSeat(t, idx, i){
+function makeSeat(t, idx, i, forPrint){
   const name = t.seats[i] || "";
   const seat = document.createElement("div");
   const isHost = name && name === t.host;
   seat.className = "seat " + (name ? "occ" : "empty") + (isHost ? " host" : "");
   if(name){ seat.innerHTML = `<span class="txt">${escapeHtml(name)}</span>`; seat.title = name; }
-  seat.onclick = ()=>openEditor(idx, i);
+  if(!forPrint) seat.onclick = ()=>openEditor(idx, i);
   return seat;
 }
 
-function makeAddedSeat(t, idx, i){
+function makeAddedSeat(t, idx, i, forPrint){
   const name = t.seats[i] || "";
   const el = document.createElement("div");
   el.className = "added-seat " + (name ? "occ" : "empty");
   el.innerHTML = name ? `<span class="txt">${escapeHtml(name)}</span>` : "＋ 空加座";
   if(name) el.title = name;
-  el.onclick = ()=>openEditor(idx, i);
+  if(!forPrint) el.onclick = ()=>openEditor(idx, i);
   return el;
 }
 
@@ -829,6 +882,65 @@ function saveMove(){
 document.getElementById("moveSave").onclick = saveMove;
 document.getElementById("moveCancel").onclick = closeMove;
 moveOverlay.addEventListener("click", e=>{ if(e.target===moveOverlay) closeMove(); });
+
+// ===== 修改备注 =====
+let noting = null;
+const noteOverlay = document.getElementById("noteOverlay");
+const noteInput = document.getElementById("noteInput");
+function openNote(idx){
+  noting = idx; const t = tables[idx];
+  document.getElementById("noteSub").textContent = tableLabel(t) + " · " + t.host + "桌";
+  noteInput.value = t.note || "";
+  noteOverlay.classList.add("show");
+  setTimeout(()=>{ noteInput.focus(); noteInput.select(); }, 30);
+}
+function closeNote(){ noteOverlay.classList.remove("show"); noting = null; }
+function saveNote(){
+  if(noting === null) return;
+  tables[noting].note = noteInput.value.trim();
+  render(); markDirty(); closeNote();
+}
+document.getElementById("noteSave").onclick = saveNote;
+document.getElementById("noteCancel").onclick = closeNote;
+document.getElementById("noteClear").onclick = ()=>{ noteInput.value = ""; saveNote(); };
+noteInput.addEventListener("keydown", e=>{ if(e.key==="Enter") saveNote(); if(e.key==="Escape") closeNote(); });
+noteOverlay.addEventListener("click", e=>{ if(e.target===noteOverlay) closeNote(); });
+
+// ===== 打印 / 导出彩色 PDF：每页左右各 2 桌（左右平行），共 4 桌/页 =====
+function preparePrint(){
+  const area = document.getElementById("printArea");
+  area.innerHTML = "";
+  // 左右两列各按 order 排序
+  const lefts  = tables.map((t,i)=>({t,i})).filter(x=>x.t.side==="left").sort((a,b)=>a.t.order-b.t.order);
+  const rights = tables.map((t,i)=>({t,i})).filter(x=>x.t.side==="right").sort((a,b)=>a.t.order-b.t.order);
+  // 逐行配对：第 r 行 = [左第 r 桌, 右第 r 桌]，保证两边平行
+  const rows = Math.max(lefts.length, rights.length);
+  const ordered = [];
+  for(let r=0; r<rows; r++){
+    if(lefts[r])  ordered.push(lefts[r]);
+    if(rights[r]) ordered.push(rights[r]);
+  }
+  // 每页 4 桌（2 行 × 2 列）
+  for(let p=0; p<ordered.length; p+=4){
+    const page = document.createElement("div");
+    page.className = "print-page";
+    const head = document.createElement("div");
+    head.className = "print-head";
+    head.innerHTML = `<div class="pnames">李涛 <span class="heart">❤</span> 李懋</div>` +
+                     `<div class="psub">婚 礼 宴 席 · 座 位 示 意 图</div>`;
+    page.appendChild(head);
+    const grid = document.createElement("div");
+    grid.className = "print-grid";
+    ordered.slice(p, p+4).forEach(({t,i})=> grid.appendChild(buildCard(t, i, true)));
+    page.appendChild(grid);
+    area.appendChild(page);
+  }
+}
+document.getElementById("printBtn").onclick = ()=>{
+  preparePrint();
+  setTimeout(()=>window.print(), 50);
+};
+window.addEventListener("afterprint", ()=>{ document.getElementById("printArea").innerHTML = ""; });
 
 // ===== 启动 =====
 if(cloudEnabled){
