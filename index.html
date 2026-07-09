@@ -330,7 +330,13 @@ async function startCloudMode(){
     docRef = doc(db, COLLECTION, DOC_ID);
     onSnapshot(docRef, snap=>{
       if(!snap.exists()){
-        // 首次使用：用默认数据初始化共享文档
+        // 仅当「从服务器确认」文档不存在时，才用默认数据初始化；
+        // 离线 / 本地无缓存时 exists 也会是 false，此时绝不能用默认数据覆盖云端，
+        // 否则联网后会把大家真实的座位数据冲掉（历史踩过的坑）。
+        if(snap.metadata.fromCache){
+          setStatus("离线中，等待联网…（不会覆盖云端）", "connecting");
+          return;
+        }
         setDoc(docRef, { tables: DEFAULT_TABLES, updatedAt: serverTimestamp() })
           .catch(err=>{ console.error(err); setStatus("初始化失败，请检查规则", "err"); });
         return;
