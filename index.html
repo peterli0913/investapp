@@ -222,6 +222,19 @@
 
   footer{text-align:center; color:var(--muted); font-size:12px; padding:0 16px 30px;}
 
+  /* ===== 拖拽换位 ===== */
+  .seat, .added-seat{ touch-action:none; }
+  .seat.dragging-src, .added-seat.dragging-src{ opacity:.35; }
+  .seat.drop-hover, .added-seat.drop-hover{ outline:3px solid var(--gold); outline-offset:1px; }
+  .drag-ghost{
+    position:fixed; transform:translate(-50%,-150%); pointer-events:none; z-index:100;
+    background:var(--occ); border:1.5px solid var(--rose); border-radius:10px;
+    padding:4px 10px; font-size:12px; font-weight:600; color:var(--ink);
+    box-shadow:0 8px 20px rgba(200,120,140,.4); white-space:nowrap; max-width:160px; overflow:hidden;
+  }
+  .btn.del-table{ background:#fff; color:#c96; border:1px solid var(--line); }
+  .mini.danger{ color:#c0607a; border-color:var(--rose-soft); }
+
   /* ===== 打印 / 导出 PDF ===== */
   #printArea{display:none;}
   .print-page{}
@@ -273,6 +286,7 @@
     <div class="stat" id="saveState">已保存</div>
     <button class="btn save" id="saveBtn">💾 储存</button>
     <button class="btn ghost" id="versionBtn">🗂 版本备份</button>
+    <button class="btn ghost" id="addTableBtn">＋ 新增桌</button>
     <button class="btn ghost" id="printBtn">🖨 打印 / 导出PDF</button>
     <button class="btn ghost" id="resetBtn">↺ 恢复默认</button>
   </div>
@@ -353,6 +367,23 @@
         <button class="btn warn" id="noteClear">清空备注</button>
         <button class="btn warn" id="noteCancel">取消</button>
         <button class="btn primary" id="noteSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增桌子 -->
+  <div class="overlay" id="addTableOverlay">
+    <div class="modal">
+      <h3>新增桌子</h3>
+      <div class="msub">新桌放在所选一侧的末尾，含 10 个空位；新增后记得点「💾 储存」</div>
+      <input id="addTableName" placeholder="桌名 / 桌主姓名" />
+      <div style="display:flex; gap:16px; margin-top:12px; font-size:14px; color:var(--ink);">
+        <label style="cursor:pointer;"><input type="radio" name="addSide" value="left" checked /> 放左侧</label>
+        <label style="cursor:pointer;"><input type="radio" name="addSide" value="right" /> 放右侧</label>
+      </div>
+      <div class="modal-btns">
+        <button class="btn warn" id="addTableCancel">取消</button>
+        <button class="btn primary" id="addTableSave">新增</button>
       </div>
     </div>
   </div>
@@ -539,7 +570,7 @@ async function startCloudMode(){
 
 function tableLabel(t){
   const sideTxt = t.side === "left" ? "左" : "右";
-  return sideTxt + CIRC[t.order-1];
+  return sideTxt + (CIRC[t.order-1] || ("(" + t.order + ")"));
 }
 
 function render(){
@@ -599,7 +630,10 @@ function buildCard(t, idx, forPrint){
     const bNote = document.createElement("button");
     bNote.className = "mini"; bNote.textContent = "✎ 备注";
     bNote.onclick = ()=>openNote(idx);
-    tools.appendChild(bName); tools.appendChild(bMove); tools.appendChild(bNote);
+    const bDel = document.createElement("button");
+    bDel.className = "mini danger"; bDel.textContent = "🗑 删桌";
+    bDel.onclick = ()=>deleteTable(idx);
+    tools.appendChild(bName); tools.appendChild(bMove); tools.appendChild(bNote); tools.appendChild(bDel);
     card.appendChild(tools);
   }
 
@@ -667,7 +701,7 @@ function makeSeat(t, idx, i, forPrint){
   const isHost = name && name === t.host;
   seat.className = "seat " + (name ? "occ" : "empty") + (isHost ? " host" : "");
   if(name){ seat.innerHTML = `<span class="txt">${escapeHtml(name)}</span>`; seat.title = name; }
-  if(!forPrint) seat.onclick = ()=>openEditor(idx, i);
+  if(!forPrint) attachSeat(seat, idx, i);
   return seat;
 }
 
@@ -677,7 +711,7 @@ function makeAddedSeat(t, idx, i, forPrint){
   el.className = "added-seat " + (name ? "occ" : "empty");
   el.innerHTML = name ? `<span class="txt">${escapeHtml(name)}</span>` : "＋ 空加座";
   if(name) el.title = name;
-  if(!forPrint) el.onclick = ()=>openEditor(idx, i);
+  if(!forPrint) attachSeat(el, idx, i);
   return el;
 }
 
@@ -941,6 +975,115 @@ document.getElementById("printBtn").onclick = ()=>{
   setTimeout(()=>window.print(), 50);
 };
 window.addEventListener("afterprint", ()=>{ document.getElementById("printArea").innerHTML = ""; });
+
+// ===== 拖拽换位（同桌/跨桌，可换到加座、可与空位互换；轻点=编辑）=====
+let drag = null;
+const DRAG_THRESH = 6;
+
+function seatUnder(x, y){
+  const el = document.elementFromPoint(x, y);
+  if(!el) return null;
+  const seat = el.closest(".seat, .added-seat");
+  return (seat && seat.dataset.t !== undefined) ? seat : null;
+}
+function clearDropHover(){ document.querySelectorAll(".drop-hover").forEach(x=>x.classList.remove("drop-hover")); }
+
+function attachSeat(el, t, s){
+  el.dataset.t = t; el.dataset.s = s;
+  el.addEventListener("pointerdown", (e)=>{
+    if(e.button && e.button !== 0) return;      // 仅左键/触摸
+    if(drag) return;
+    try{ el.setPointerCapture(e.pointerId); }catch(_){}
+    drag = { t, s, id:e.pointerId, x0:e.clientX, y0:e.clientY, moved:false, ghost:null, srcEl:el };
+    // 监听挂在 document 上：鼠标与触摸都能可靠收到移动/抬起事件
+    document.addEventListener("pointermove", onDragMove);
+    document.addEventListener("pointerup", onDragUp, { once:true });
+    document.addEventListener("pointercancel", onDragUp, { once:true });
+  });
+}
+
+function onDragMove(e){
+  if(!drag || e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  if(!drag.moved && Math.hypot(dx, dy) > DRAG_THRESH){
+    drag.moved = true;
+    drag.srcEl.classList.add("dragging-src");
+    const name = tables[drag.t].seats[drag.s] || "";
+    const g = document.createElement("div");
+    g.className = "drag-ghost";
+    g.textContent = name || "（空位）";
+    document.body.appendChild(g);
+    drag.ghost = g;
+    document.body.style.userSelect = "none";
+  }
+  if(drag.moved){
+    e.preventDefault();
+    drag.ghost.style.left = e.clientX + "px";
+    drag.ghost.style.top = e.clientY + "px";
+    clearDropHover();
+    const tgt = seatUnder(e.clientX, e.clientY);
+    if(tgt && !(Number(tgt.dataset.t) === drag.t && Number(tgt.dataset.s) === drag.s)){
+      tgt.classList.add("drop-hover");
+    }
+  }
+}
+
+function onDragUp(e){
+  if(!drag) return;
+  const d = drag; drag = null;
+  document.removeEventListener("pointermove", onDragMove);
+  document.body.style.userSelect = "";
+  if(d.ghost) d.ghost.remove();
+  d.srcEl.classList.remove("dragging-src");
+  clearDropHover();
+  if(!d.moved){ openEditor(d.t, d.s); return; }   // 轻点 → 编辑
+  if(e.type === "pointercancel") return;
+  const tgt = seatUnder(e.clientX, e.clientY);
+  if(!tgt) return;
+  const t2 = Number(tgt.dataset.t), s2 = Number(tgt.dataset.s);
+  if(t2 === d.t && s2 === d.s) return;
+  // 互换两个座位的内容（含加座、含空位）
+  const tmp = tables[d.t].seats[d.s];
+  tables[d.t].seats[d.s] = tables[t2].seats[s2];
+  tables[t2].seats[s2] = tmp;
+  render(); markDirty(); flash("已互换位置");
+}
+
+// ===== 新增桌子 =====
+const addTableOverlay = document.getElementById("addTableOverlay");
+const addTableName = document.getElementById("addTableName");
+function openAddTable(){
+  addTableName.value = "";
+  document.querySelector('input[name="addSide"][value="left"]').checked = true;
+  addTableOverlay.classList.add("show");
+  setTimeout(()=>addTableName.focus(), 30);
+}
+function closeAddTable(){ addTableOverlay.classList.remove("show"); }
+function saveAddTable(){
+  const name = addTableName.value.trim();
+  if(!name){ alert("请填写桌名 / 桌主姓名"); return; }
+  const side = document.querySelector('input[name="addSide"]:checked').value;
+  const maxOrder = tables.filter(t=>t.side===side).reduce((m,t)=>Math.max(m, t.order), 0);
+  tables.push({ host:name, side, order:maxOrder+1, note:"", seats:["","","","","","","","","",""] });
+  render(); markDirty(); closeAddTable(); flash("已新增桌子（记得储存）");
+}
+document.getElementById("addTableBtn").onclick = openAddTable;
+document.getElementById("addTableSave").onclick = saveAddTable;
+document.getElementById("addTableCancel").onclick = closeAddTable;
+addTableName.addEventListener("keydown", e=>{ if(e.key==="Enter") saveAddTable(); if(e.key==="Escape") closeAddTable(); });
+addTableOverlay.addEventListener("click", e=>{ if(e.target===addTableOverlay) closeAddTable(); });
+
+// ===== 删除桌子 =====
+function deleteTable(idx){
+  const t = tables[idx];
+  const occ = t.seats.filter(s=>s && s.trim()).length;
+  if(!confirm(`确定删除「${tableLabel(t)} ${t.host}桌」吗？` + (occ ? `\n该桌还有 ${occ} 位宾客，删除后这些人也会一并移除。` : "") + "\n（删除后需点「💾 储存」才会生效）")) return;
+  const side = t.side;
+  tables.splice(idx, 1);
+  // 重新编号该侧桌序，保持 左①左②… 连续
+  tables.filter(x=>x.side===side).sort((a,b)=>a.order-b.order).forEach((x,i)=>{ x.order = i+1; });
+  render(); markDirty(); flash("已删除桌子（记得储存）");
+}
 
 // ===== 启动 =====
 if(cloudEnabled){
